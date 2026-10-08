@@ -6,6 +6,8 @@ import json
 import math
 import os
 import base64
+import time
+import requests
 
 st.set_page_config(
     page_title="SMART BUS | Bus Route and Passenger Management System",
@@ -773,6 +775,98 @@ def run_autonomous_sync(api_key=None):
         routes = generate_autonomous_government_routes()
         return routes, "Autonomous Native Engine (Hands-Free Active)"
 
+
+# -----------------------------------------------------------------------------
+# 5B. LIVE TRANSPORT API AUTO-SYNC
+# -----------------------------------------------------------------------------
+# API keys are credentials: the app reads them securely from Streamlit Secrets.
+# It never invents or exposes a key. If a transport API is configured, records
+# are refreshed automatically and merged into the existing service list.
+AUTO_SYNC_TTL_SECONDS = 15 * 60
+
+def get_smart_bus_api_config():
+    api_url, api_key = "", ""
+    try:
+        if hasattr(st, "secrets"):
+            api_url = str(st.secrets.get("SMART_BUS_API_URL", "")).strip()
+            api_key = str(st.secrets.get("SMART_BUS_API_KEY", "")).strip()
+    except Exception:
+        pass
+    api_url = api_url or os.environ.get("SMART_BUS_API_URL", "").strip()
+    api_key = api_key or os.environ.get("SMART_BUS_API_KEY", "").strip()
+    return api_url, api_key
+
+def _normalise_live_service(item):
+    if not isinstance(item, dict):
+        return None
+    def pick(*names, default=""):
+        for name in names:
+            if name in item and item[name] not in (None, ""):
+                return item[name]
+        return default
+    bus_no = str(pick("bus_no","busNo","registration","registration_no","bus_number","busNumber","vehicle_no")).strip()
+    origin = str(pick("from","origin","source","from_place")).strip()
+    destination = str(pick("to","destination","dest","to_place")).strip()
+    if not bus_no or not origin or not destination:
+        return None
+    service_type = str(pick("type","service_type","serviceClass","class_of_service",default="TNSTC Express")).strip()
+    dep = str(pick("dep","departure","departure_time","dept_time",default="")).strip()
+    arr = str(pick("arr","arrival","arrival_time",default="")).strip()
+    try: distance_km = int(float(pick("distance_km","distance","total_km",default=0)))
+    except Exception: distance_km = 0
+    if distance_km <= 0: distance_km = calculate_route_distance(origin, destination)
+    try: seats = int(float(pick("seats","available_seats","seats_available",default=0)))
+    except Exception: seats = 0
+    try: max_seats = int(float(pick("max_seats","capacity","total_seats",default=50)))
+    except Exception: max_seats = 50
+    try: dep_minutes = parse_time_str(dep)
+    except Exception: dep_minutes = 480
+    duration_str = str(pick("duration_str","duration",default="")).strip()
+    if not duration_str:
+        speed = OFFICIAL_FARE_RULES.get(service_type, OFFICIAL_FARE_RULES["TNSTC Express"]).get("speed_kmh",45)
+        duration_min = int((distance_km / max(1,speed))*60)
+        duration_str = f"{duration_min//60}h {duration_min%60}m"
+    try: fare = int(float(pick("fare","total_fare","price",default=0)))
+    except Exception: fare = 0
+    if fare <= 0: fare = compute_official_fare(origin,destination,service_type,distance_km,False)["total_fare"]
+    via = pick("via","stops","route_stops",default=[])
+    if isinstance(via,str): via=[x.strip() for x in via.split(",") if x.strip()]
+    if not isinstance(via,list) or not via: via=[origin,destination]
+    depot = str(pick("depot","depot_name",default="TNSTC")).strip()
+    return {"bus_no":bus_no,"type":service_type,"from":origin,"to":destination,"dep":dep or "N/A","arr":arr or "N/A","dep_minutes":dep_minutes,"duration_str":duration_str,"fare":fare,"fare_breakdown":compute_official_fare(origin,destination,service_type,distance_km,False),"seats":max(0,seats),"max_seats":max(1,max_seats),"depot":depot,"via":via,"distance_km":distance_km,"is_api_synced":True,"is_autonomous_synced":True,"updated_at":datetime.now().strftime("%d-%b-%Y %I:%M %p")}
+
+def fetch_live_transport_api():
+    api_url, api_key = get_smart_bus_api_config()
+    if not api_url: return [], "No external API configured"
+    headers={"Accept":"application/json","User-Agent":"SMART-BUS-TNSTC-Portal/1.0"}
+    if api_key:
+        headers["Authorization"]=f"Bearer {api_key}"
+        headers["X-API-Key"]=api_key
+    try:
+        response=requests.get(api_url,headers=headers,timeout=15)
+        response.raise_for_status()
+        payload=response.json()
+        raw_items = payload if isinstance(payload,list) else (payload.get("buses") or payload.get("services") or payload.get("data") or payload.get("results") or []) if isinstance(payload,dict) else []
+        records=[r for x in raw_items if (r:=_normalise_live_service(x))]
+        if not records: return [], "API connected but returned no compatible bus records"
+        return records, f"Live Transport API ({len(records)} records)"
+    except Exception as exc:
+        return [], f"API unavailable: {type(exc).__name__}"
+
+def run_live_api_auto_update(force=False):
+    now=time.time(); last=st.session_state.get("live_api_last_epoch",0)
+    if not force and now-last < AUTO_SYNC_TTL_SECONDS: return False
+    st.session_state.live_api_last_epoch=now
+    records,label=fetch_live_transport_api()
+    st.session_state.live_api_last_status=label
+    if not records: return False
+    existing={str(b.get("bus_no")):b for b in st.session_state.custom_ai_buses if b.get("bus_no")}
+    for record in records: existing[record["bus_no"]]=record
+    st.session_state.custom_ai_buses=list(existing.values())
+    st.session_state.sync_source_label=label
+    st.session_state.last_sync_timestamp=datetime.now().strftime("%d-%b-%Y %I:%M %p")
+    return True
+
 # STREAMLIT STATE INITIALIZATION
 if "booked_tickets" not in st.session_state:
     st.session_state.booked_tickets = []
@@ -786,6 +880,13 @@ if "sync_source_label" not in st.session_state:
     st.session_state.sync_source_label = "Pending"
 if "last_sync_timestamp" not in st.session_state:
     st.session_state.last_sync_timestamp = None
+if "live_api_last_epoch" not in st.session_state:
+    st.session_state.live_api_last_epoch = 0
+if "live_api_last_status" not in st.session_state:
+    st.session_state.live_api_last_status = "Not configured"
+
+# Automatic live-data update; no UI changes. Refreshes at most every 15 minutes.
+run_live_api_auto_update(force=False)
 
 # Hands-free background execution: Admin never has to touch or click anything!
 active_gemini_key = get_gemini_api_key()
@@ -1220,6 +1321,41 @@ with tab_timing:
                     
                     st.link_button(f"🌐 Book {bus['bus_no']} on Official Govt Webpage (www.tnstc.in)", url="https://www.tnstc.in/TNSTCOnline/", use_container_width=True)
 
+    with st.expander("🛠️ Bus Management — Add / Update / Delete / Search", expanded=False):
+        if "managed_fleet" not in st.session_state: st.session_state.managed_fleet=[]
+        managed=st.session_state.managed_fleet
+        a,b,c,d=st.columns(4)
+        with a: bus_id=st.text_input("Bus ID",placeholder="BUS101",key="mg_bus_id")
+        with b: reg_no=st.text_input("Registration No.",placeholder="TN-33-N-1234",key="mg_reg")
+        with c: route_no=st.text_input("Route No.",placeholder="R12",key="mg_route")
+        with d: driver=st.text_input("Driver",placeholder="Driver Name",key="mg_driver")
+        a,b,c,d=st.columns(4)
+        with a: capacity=st.number_input("Capacity",1,100,50,key="mg_capacity")
+        with b: passengers=st.number_input("Passengers",0,100,42,key="mg_passengers")
+        with c: bus_status=st.selectbox("Status",["Running","Scheduled","Stopped","Maintenance"],key="mg_status")
+        with d: corporation=st.selectbox("Corporation",["MTC","SETC","TNSTC Villupuram","TNSTC Salem","TNSTC Coimbatore","TNSTC Madurai","TNSTC Kumbakonam","TNSTC Tirunelveli"],key="mg_corp")
+        x,y,z,w=st.columns(4)
+        with x:
+            if st.button("➕ Add Bus",use_container_width=True,key="mg_add"):
+                if bus_id.strip() and reg_no.strip():
+                    rec={"Bus ID":bus_id.strip(),"Registration No":reg_no.strip(),"Route No":route_no.strip(),"Driver":driver.strip(),"Capacity":int(capacity),"Passengers":int(passengers),"Available Seats":max(0,int(capacity)-int(passengers)),"Status":bus_status,"Corporation":corporation,"Updated At":datetime.now().strftime("%d-%b-%Y %I:%M %p")}
+                    managed[:]=[q for q in managed if q["Bus ID"]!=rec["Bus ID"]]; managed.append(rec); st.success(f"Bus {bus_id.strip()} added.")
+                else: st.warning("Enter Bus ID and Registration No.")
+        with y:
+            if st.button("✏️ Update Bus",use_container_width=True,key="mg_update"):
+                found=next((q for q in managed if q["Bus ID"]==bus_id.strip()),None)
+                if found:
+                    found.update({"Registration No":reg_no.strip(),"Route No":route_no.strip(),"Driver":driver.strip(),"Capacity":int(capacity),"Passengers":int(passengers),"Available Seats":max(0,int(capacity)-int(passengers)),"Status":bus_status,"Corporation":corporation,"Updated At":datetime.now().strftime("%d-%b-%Y %I:%M %p")}); st.success(f"Bus {bus_id.strip()} updated.")
+                else: st.warning("Bus ID not found in the managed fleet.")
+        with z:
+            if st.button("🗑️ Delete Bus",use_container_width=True,key="mg_delete"):
+                before=len(managed); st.session_state.managed_fleet=[q for q in managed if q["Bus ID"]!=bus_id.strip()]
+                st.success(f"Bus {bus_id.strip()} deleted.") if len(st.session_state.managed_fleet)<before else st.warning("Bus ID not found.")
+        with w:
+            if st.button("🔄 Refresh Live API",use_container_width=True,key="mg_refresh"):
+                changed=run_live_api_auto_update(force=True); st.success("Live API data refreshed.") if changed else st.info(st.session_state.get("live_api_last_status","No live records received."))
+        if managed: st.dataframe(pd.DataFrame(managed),hide_index=True,use_container_width=True)
+
 # -----------------------------------------------------------------------------
 # TAB 2: ONLINE BUS TICKET BOOKING & INTERACTIVE SEAT PICKER
 # -----------------------------------------------------------------------------
@@ -1399,6 +1535,13 @@ with tab_passengers:
     st.subheader("📋 Verified Digital Ticket Ledger & Boarding Pass")
     st.caption("Official digital boarding documents conforming to Tamil Nadu Motor Vehicles Act standards.")
 
+    with st.expander("❌ Cancel Ticket", expanded=False):
+        cancel_pnr=st.text_input("Enter PNR to cancel",key="cancel_pnr")
+        if st.button("Cancel Reservation",key="cancel_reservation"):
+            before=len(st.session_state.booked_tickets)
+            st.session_state.booked_tickets=[t for t in st.session_state.booked_tickets if t.get("PNR")!=cancel_pnr.strip()]
+            st.success(f"PNR {cancel_pnr.strip()} cancelled successfully.") if len(st.session_state.booked_tickets)<before else st.warning("PNR not found.")
+
     if not st.session_state.booked_tickets:
         st.info("No tickets have been booked in this session yet. Go to the 'Book Ticket' tab to reserve your journey!")
     else:
@@ -1545,6 +1688,31 @@ with tab_fare_matrix:
             st.markdown("**Major Operational Depots:**")
             for dp in div_info["depots"][:4]:
                 st.markdown(f"- {dp}")
+
+    with st.expander("📊 Bus Status Report & Passenger Load Analysis", expanded=False):
+        rows=[]
+        for bus in st.session_state.get("managed_fleet",[]):
+            cap=int(bus.get("Capacity",0)); pax=int(bus.get("Passengers",0)); load=round(pax/cap*100,1) if cap else 0
+            rows.append({"Bus ID":bus.get("Bus ID"),"Registration":bus.get("Registration No"),"Route":bus.get("Route No"),"Capacity":cap,"Passengers":pax,"Available Seats":max(0,cap-pax),"Load %":f"{load}%","Status":bus.get("Status"),"Corporation":bus.get("Corporation")})
+        if rows:
+            st.dataframe(pd.DataFrame(rows),hide_index=True,use_container_width=True)
+            peak=max(rows,key=lambda q:float(str(q["Load %"]).rstrip("%"))); st.info(f"Highest passenger load: **{peak['Bus ID']}** — {peak['Load %']} on Route **{peak['Route']}**.")
+        else: st.info("Add buses in the Bus Management expander to populate the status and passenger-load report.")
+
+    with st.expander("🗺️ Route Management — Add Route / Stops / Update", expanded=False):
+        if "managed_routes" not in st.session_state: st.session_state.managed_routes=[]
+        a,b,c=st.columns(3)
+        with a: mr_no=st.text_input("Route Number",placeholder="R12",key="mr_no")
+        with b: mr_from=st.text_input("Source",placeholder="Erode",key="mr_from")
+        with c: mr_to=st.text_input("Destination",placeholder="Coimbatore",key="mr_to")
+        mr_stops=st.text_input("Stops (comma separated)",placeholder="Bhavani, Annur, Gandhipuram",key="mr_stops")
+        if st.button("💾 Save / Update Route",key="mr_save"):
+            if mr_no.strip() and mr_from.strip() and mr_to.strip():
+                rec={"Route No":mr_no.strip(),"Source":mr_from.strip(),"Destination":mr_to.strip(),"Stops":[q.strip() for q in mr_stops.split(",") if q.strip()],"Updated At":datetime.now().strftime("%d-%b-%Y %I:%M %p")}
+                st.session_state.managed_routes=[q for q in st.session_state.managed_routes if q["Route No"]!=rec["Route No"]]; st.session_state.managed_routes.append(rec); st.success(f"Route {mr_no.strip()} saved.")
+            else: st.warning("Enter Route Number, Source and Destination.")
+        if st.session_state.managed_routes:
+            st.dataframe(pd.DataFrame([{"Route No":q["Route No"],"Source":q["Source"],"Destination":q["Destination"],"Stops":" → ".join(q["Stops"]),"Updated At":q["Updated At"]} for q in st.session_state.managed_routes]),hide_index=True,use_container_width=True)
 
 # -----------------------------------------------------------------------------
 # TAB 5: AUTONOMOUS GEMINI AI CONTROL & ZERO-TOUCH TRANSIT INTELLIGENCE
