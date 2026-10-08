@@ -4,8 +4,109 @@ import pandas as pd
 import os
 from datetime import datetime
 
-st.set_page_config(page_title="SMART BUS", page_icon="🚌", layout="wide")
+# ---------------------------------------------------------
+# PAGE SETUP & OMIO-STYLE THEME INJECTION
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="SMART BUS | Intercity Travel",
+    page_icon="🚌",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #111827;
+}
+
+/* Base Container */
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1200px;
+}
+
+/* Header Banner */
+.hero-header {
+    background: linear-gradient(135deg, #102A43 0%, #0B1D3A 100%);
+    border-radius: 16px;
+    padding: 32px 36px;
+    color: #ffffff;
+    margin-bottom: 24px;
+    box-shadow: 0 10px 25px -5px rgba(11, 29, 58, 0.15);
+}
+.hero-title {
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: #FFFFFF;
+}
+.hero-subtitle {
+    font-size: 14px;
+    color: #9FB3C8;
+    margin-top: 6px;
+    margin-bottom: 0;
+}
+
+/* Omio Ticket Card */
+.ticket-card {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 16px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+    transition: all 0.2s ease-in-out;
+}
+.ticket-card:hover {
+    border-color: #CBD5E1;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.06);
+}
+.operator-badge {
+    background: #F1F5F9;
+    color: #334155;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+}
+.amenity-chip {
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    color: #64748B;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-weight: 500;
+}
+.price-tag {
+    font-size: 24px;
+    font-weight: 800;
+    color: #0F172A;
+}
+
+/* Timeline Indicators */
+.timeline-text {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0F172A;
+}
+.timeline-sub {
+    font-size: 12px;
+    color: #64748B;
+    font-weight: 500;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# DATABASE ENGINE
+# ---------------------------------------------------------
 DB = "smart_bus.db"
 ADMIN_PASSWORD = os.environ.get("SMART_BUS_ADMIN_PASSWORD", "admin123")
 
@@ -18,10 +119,8 @@ BUS_TYPES = ["Ordinary", "Express", "Super Deluxe", "Ultra Deluxe",
              "AC", "AC Sleeper", "Volvo", "Low Floor", "Semi Low Floor"]
 STATUSES = ["Running", "Scheduled", "Maintenance", "Breakdown", "Inactive"]
 
-
 def db():
     return sqlite3.connect(DB, check_same_thread=False)
-
 
 def setup():
     c = db()
@@ -40,13 +139,11 @@ def setup():
     c.commit()
     c.close()
 
-
 def query(sql, params=()):
     c = db()
     out = pd.read_sql_query(sql, c, params=params)
     c.close()
     return out
-
 
 def run(sql, params=()):
     c = db()
@@ -54,17 +151,16 @@ def run(sql, params=()):
     c.commit()
     c.close()
 
-
 def seed():
     if not query("SELECT * FROM buses LIMIT 1").empty:
         return
     rows = [
-        ("BUS101","TN33N0101","TNSTC Coimbatore","R12","Erode - Coimbatore","Government Driver","Express",50,50,"Running","Erode"),
-        ("BUS102","TN38N0102","TNSTC Salem","R21","Salem - Erode","Government Driver","Ordinary",52,52,"Scheduled","Salem"),
-        ("BUS103","TN57N0103","TNSTC Madurai","R31","Madurai - Trichy","Government Driver","Super Deluxe",48,48,"Running","Madurai"),
-        ("BUS104","TN72N0104","TNSTC Tirunelveli","R41","Tirunelveli - Madurai","Government Driver","Ultra Deluxe",48,48,"Running","Tirunelveli"),
-        ("BUS105","TN01N0105","MTC","M1","Chennai City Service","Government Driver","Ordinary",50,50,"Running","Chennai"),
-        ("BUS106","TN01N0106","SETC","S1","Chennai - Coimbatore","Government Driver","Volvo",40,40,"Scheduled","Chennai"),
+        ("BUS101","TN33N0101","TNSTC Coimbatore","R12","Erode - Coimbatore","Government Driver","Express",50,42,"Running","Erode"),
+        ("BUS102","TN38N0102","TNSTC Salem","R21","Salem - Erode","Government Driver","Ordinary",52,48,"Scheduled","Salem"),
+        ("BUS103","TN57N0103","TNSTC Madurai","R31","Madurai - Trichy","Government Driver","Super Deluxe",48,22,"Running","Madurai"),
+        ("BUS104","TN72N0104","TNSTC Tirunelveli","R41","Tirunelveli - Madurai","Government Driver","Ultra Deluxe",48,31,"Running","Tirunelveli"),
+        ("BUS105","TN01N0105","MTC","M1","Chennai City Service","Government Driver","Ordinary",50,15,"Running","Chennai"),
+        ("BUS106","TN01N0106","SETC","S1","Chennai - Coimbatore","Government Driver","Volvo",40,18,"Scheduled","Chennai"),
     ]
     c = db()
     c.executemany(
@@ -83,317 +179,298 @@ def seed():
     c.commit()
     c.close()
 
-
 setup()
 seed()
 
+# ---------------------------------------------------------
+# TOP BANNER
+# ---------------------------------------------------------
 st.markdown("""
-<style>
-.block-container{padding-top:1.5rem}
-.title{font-size:36px;font-weight:800;margin:0}
-.subtitle{color:#666;font-size:16px}
-</style>
+<div class="hero-header">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+            <h1 class="hero-title">smartbus</h1>
+            <p class="hero-subtitle">Intercity Bus Reservation & Real-Time Fleet Network</p>
+        </div>
+        <div style="text-align:right;">
+            <span style="background:rgba(255,255,255,0.15); padding:6px 14px; border-radius:20px; font-size:12px; font-weight:600;">
+                🟢 All TN Corridors Operational
+            </span>
+        </div>
+    </div>
+</div>
 """, unsafe_allow_html=True)
 
-st.sidebar.title("🚌 SMART BUS")
-st.sidebar.caption("BUS ROUTE AND PASSENGER MANAGEMENT SYSTEM")
-
+# ---------------------------------------------------------
+# SIDEBAR NAVIGATION & AUTHENTICATION
+# ---------------------------------------------------------
 if "admin" not in st.session_state:
     st.session_state.admin = False
 
-with st.sidebar.expander("🔐 Admin Login"):
-    password = st.text_input("Password", type="password")
-    if st.button("Login", use_container_width=True):
-        if password == ADMIN_PASSWORD:
-            st.session_state.admin = True
-            st.success("Admin logged in")
-            st.rerun()
-        else:
-            st.error("Wrong password")
+st.sidebar.markdown("### 🧭 Portal Navigation")
+view_mode = st.sidebar.radio(
+    "Choose View",
+    ["Traveler Portal", "Fleet & Dispatch Ops", "System Analytics"],
+    label_visibility="collapsed"
+)
 
-admin = st.session_state.admin
-
-page = st.sidebar.radio("MENU", [
-    "🏠 Dashboard", "🚌 Bus Management", "🗺️ Route Management",
-    "🎫 Passenger Management", "💰 Fare Calculator",
-    "📊 Analytics", "📋 Bus Status Report", "🔐 Admin Portal"
-])
-
-st.markdown('<p class="title">SMART BUS</p>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">BUS ROUTE AND PASSENGER MANAGEMENT SYSTEM</p>', unsafe_allow_html=True)
-st.divider()
-
-# DASHBOARD
-if page == "🏠 Dashboard":
-    buses = query("SELECT * FROM buses WHERE status!='Inactive'")
-    routes = query("SELECT * FROM routes WHERE active=1")
-    passengers = query("SELECT * FROM passengers WHERE status='Booked'")
-
-    a,b,c,d = st.columns(4)
-    a.metric("Total Buses", len(buses))
-    b.metric("Active Routes", len(routes))
-    c.metric("Booked Tickets", len(passengers))
-    d.metric("Available Seats", int(buses.available_seats.sum()) if not buses.empty else 0)
-
-    st.subheader("Tamil Nadu Government Transport Corporations")
-    cols = st.columns(4)
-    for i, corp in enumerate(CORPORATIONS):
-        n = len(buses[buses.corporation == corp])
-        cols[i % 4].info(f"**{corp}**\n\n{n} buses")
-
-    st.subheader("Fleet")
-    st.dataframe(buses, use_container_width=True, hide_index=True)
-
-# BUS MANAGEMENT
-elif page == "🚌 Bus Management":
-    st.subheader("Bus Management")
-    t1,t2,t3 = st.tabs(["🔎 Search / View","➕ Add / Update","🗑️ Delete"])
-
-    with t1:
-        search = st.text_input("Search Bus ID, Registration, Corporation or Route")
-        df = query("SELECT * FROM buses WHERE status!='Inactive'")
-        if search:
-            s = search.lower()
-            df = df[df.apply(lambda r: s in " ".join(map(str,r.values)).lower(), axis=1)]
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-    with t2:
-        with st.form("bus_form"):
-            a,b,c = st.columns(3)
-            bus_id = a.text_input("Bus ID *")
-            reg_no = b.text_input("Registration No. *")
-            corp = c.selectbox("Corporation", CORPORATIONS)
-            a,b,c = st.columns(3)
-            route_no = a.text_input("Route No.")
-            route = b.text_input("Route")
-            driver = c.text_input("Driver", "Government Driver")
-            a,b,c = st.columns(3)
-            bus_type = a.selectbox("Bus Type", BUS_TYPES)
-            capacity = b.number_input("Capacity", 1, 200, 50)
-            available = c.number_input("Available Seats", 0, 200, 50)
-            a,b = st.columns(2)
-            status = a.selectbox("Status", STATUSES)
-            depot = b.text_input("Depot")
-            save = st.form_submit_button("💾 SAVE / UPDATE BUS", use_container_width=True)
-
-        if save:
-            if not bus_id or not reg_no:
-                st.error("Bus ID and Registration No. are required.")
-            else:
-                now = datetime.now().strftime("%Y-%m-%d %H:%M")
-                c = db()
-                c.execute("""INSERT INTO buses VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(bus_id) DO UPDATE SET
-                    reg_no=excluded.reg_no, corporation=excluded.corporation,
-                    route_no=excluded.route_no, route=excluded.route,
-                    driver=excluded.driver, bus_type=excluded.bus_type,
-                    capacity=excluded.capacity,
-                    available_seats=excluded.available_seats,
-                    status=excluded.status, depot=excluded.depot,
-                    updated_at=excluded.updated_at""",
-                    (bus_id.upper(),reg_no.upper(),corp,route_no,route,driver,
-                     bus_type,int(capacity),min(int(available),int(capacity)),
-                     status,depot,now))
-                c.commit()
-                c.close()
-                st.success("Bus saved successfully.")
+st.sidebar.markdown("---")
+with st.sidebar.expander("🔐 Depot / Admin Portal"):
+    if not st.session_state.admin:
+        password = st.text_input("Enter Passkey", type="password")
+        if st.button("Unlock Admin Access", use_container_width=True):
+            if password == ADMIN_PASSWORD:
+                st.session_state.admin = True
+                st.toast("Admin clearance authorized", icon="✅")
                 st.rerun()
-
-    with t3:
-        ids = query("SELECT bus_id FROM buses WHERE status!='Inactive'").bus_id.tolist()
-        if ids:
-            selected = st.selectbox("Select Bus", ids)
-            if st.button("Deactivate Bus", type="primary"):
-                run("UPDATE buses SET status='Inactive' WHERE bus_id=?", (selected,))
-                st.success("Bus deactivated.")
-                st.rerun()
-
-# ROUTES
-elif page == "🗺️ Route Management":
-    st.subheader("Route Management")
-    with st.form("route_form"):
-        a,b = st.columns(2)
-        route_no = a.text_input("Route No. *")
-        source = b.text_input("Source *")
-        a,b = st.columns(2)
-        destination = a.text_input("Destination *")
-        distance = b.number_input("Distance (KM)", 0.0, 5000.0, 0.0)
-        stops = st.text_area("Stops (comma separated)")
-        save = st.form_submit_button("💾 SAVE / UPDATE ROUTE", use_container_width=True)
-
-    if save:
-        if not route_no or not source or not destination:
-            st.error("Route No., Source and Destination are required.")
-        else:
-            run("""INSERT INTO routes VALUES(?,?,?,?,?,1)
-                ON CONFLICT(route_no) DO UPDATE SET
-                source=excluded.source, destination=excluded.destination,
-                stops=excluded.stops, distance_km=excluded.distance_km, active=1""",
-                (route_no.upper(),source,destination,stops,distance))
-            st.success("Route saved.")
-            st.rerun()
-
-    st.dataframe(query("SELECT * FROM routes WHERE active=1"),
-                 use_container_width=True, hide_index=True)
-
-# PASSENGERS
-elif page == "🎫 Passenger Management":
-    st.subheader("Passenger Management")
-    t1,t2 = st.tabs(["🎫 Book Ticket","🔎 Passenger Details"])
-
-    with t1:
-        buses = query("SELECT bus_id FROM buses WHERE status!='Inactive'")
-        if buses.empty:
-            st.warning("No active buses.")
-        else:
-            with st.form("ticket_form"):
-                a,b,c = st.columns(3)
-                name = a.text_input("Passenger Name")
-                phone = b.text_input("Phone")
-                bus_id = c.selectbox("Bus", buses.bus_id.tolist())
-                a,b,c = st.columns(3)
-                source = a.text_input("From")
-                destination = b.text_input("To")
-                seats = c.number_input("Seats",1,10,1)
-                fare = st.number_input("Fare per Seat (₹)",0.0,10000.0,50.0)
-                book = st.form_submit_button("🎟️ BOOK TICKET", use_container_width=True)
-
-            if book:
-                row = query("SELECT * FROM buses WHERE bus_id=?", (bus_id,)).iloc[0]
-                if not name or not phone:
-                    st.error("Enter passenger name and phone.")
-                elif seats > int(row.available_seats):
-                    st.error(f"Only {int(row.available_seats)} seats available.")
-                else:
-                    pnr = "PNR" + datetime.now().strftime("%y%m%d%H%M%S%f")[-10:]
-                    run("""INSERT INTO passengers VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                        (pnr,name,phone,bus_id,str(row.route_no),source,destination,
-                         int(seats),float(seats*fare),"Booked",
-                         datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                    run("UPDATE buses SET available_seats=available_seats-? WHERE bus_id=?",
-                        (int(seats),bus_id))
-                    st.success(f"Ticket booked successfully. PNR: {pnr}")
-
-    with t2:
-        p = query("SELECT * FROM passengers ORDER BY booked_at DESC")
-        st.dataframe(p, use_container_width=True, hide_index=True)
-        if not p.empty:
-            pnr = st.selectbox("PNR to cancel", p.pnr.tolist())
-            if st.button("Cancel Ticket", type="primary"):
-                row = p[p.pnr == pnr].iloc[0]
-                if row.status == "Booked":
-                    run("UPDATE passengers SET status='Cancelled' WHERE pnr=?", (pnr,))
-                    run("UPDATE buses SET available_seats=available_seats+? WHERE bus_id=?",
-                        (int(row.seats),row.bus_id))
-                    st.success("Ticket cancelled and seats restored.")
-                    st.rerun()
-                else:
-                    st.warning("This ticket is already cancelled.")
-
-# FARE
-elif page == "💰 Fare Calculator":
-    st.subheader("Fare Calculator")
-    a,b,c = st.columns(3)
-    distance = a.number_input("Distance (KM)",1.0,2000.0,100.0)
-    rate = b.number_input("Rate per KM (₹)",0.0,100.0,0.75)
-    passengers = c.number_input("Passengers",1,100,1)
-    st.metric("Estimated Total Fare", f"₹{distance * rate * passengers:,.2f}")
-    st.caption("Use the verified rate supplied by your project/admin for real fares.")
-
-# ANALYTICS
-elif page == "📊 Analytics":
-    st.subheader("Fleet & Passenger Analytics")
-    buses = query("SELECT * FROM buses")
-    p = query("SELECT * FROM passengers")
-
-    active = buses[buses.status != "Inactive"].copy()
-    if not active.empty:
-        st.write("### Fleet by Corporation")
-        st.bar_chart(active.groupby("corporation").size())
-
-        active["Passengers"] = active["capacity"] - active["available_seats"]
-        active["Load %"] = (active["Passengers"] / active["capacity"] * 100).round(1)
-        st.write("### Passenger Load Analysis")
-        st.dataframe(active[["bus_id","corporation","capacity","Passengers",
-                             "available_seats","Load %","status"]],
-                     use_container_width=True, hide_index=True)
-
-    st.write("### Peak-Hour Analysis")
-    if not p.empty:
-        p["hour"] = pd.to_datetime(p.booked_at, errors="coerce").dt.hour
-        peak = p[p.status=="Booked"].groupby("hour").size()
-        if not peak.empty:
-            st.bar_chart(peak)
-        else:
-            st.info("No booked-ticket data yet.")
-    else:
-        st.info("Book tickets to generate peak-hour data.")
-
-# STATUS REPORT
-elif page == "📋 Bus Status Report":
-    st.subheader("Bus Status Report")
-    df = query("""SELECT bus_id, reg_no, corporation, route_no, route,
-                  capacity, capacity-available_seats AS passengers,
-                  available_seats, status
-                  FROM buses WHERE status!='Inactive'""")
-    st.dataframe(df, use_container_width=True, hide_index=True)
-    st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode(),
-                       "bus_status_report.csv", "text/csv")
-
-# ADMIN
-elif page == "🔐 Admin Portal":
-    if not admin:
-        st.warning("Admin login required.")
-        st.info("Demo password: admin123")
-    else:
-        st.subheader("🔐 ADMIN PORTAL")
-        st.success("Administrator access active.")
-
-        st.write("### Automatic Fleet Import / Update")
-        st.caption("Upload a VERIFIED CSV. Existing Bus IDs are updated and new Bus IDs are added automatically.")
-
-        upload = st.file_uploader("Upload Fleet CSV", type=["csv"])
-        if upload:
-            data = pd.read_csv(upload)
-            required = ["bus_id","reg_no","corporation","route_no","route","driver",
-                        "bus_type","capacity","available_seats","status","depot"]
-            missing = [x for x in required if x not in data.columns]
-
-            if missing:
-                st.error("Missing columns: " + ", ".join(missing))
             else:
-                st.dataframe(data.head(20), use_container_width=True, hide_index=True)
-                if st.button("⬆️ IMPORT / UPDATE FLEET", type="primary"):
-                    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    c = db()
-                    for _, r in data.iterrows():
-                        capacity = int(r["capacity"])
-                        available = min(int(r["available_seats"]), capacity)
-                        c.execute("""INSERT INTO buses VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-                            ON CONFLICT(bus_id) DO UPDATE SET
-                            reg_no=excluded.reg_no, corporation=excluded.corporation,
-                            route_no=excluded.route_no, route=excluded.route,
-                            driver=excluded.driver, bus_type=excluded.bus_type,
-                            capacity=excluded.capacity,
-                            available_seats=excluded.available_seats,
-                            status=excluded.status, depot=excluded.depot,
-                            updated_at=excluded.updated_at""",
-                            (str(r["bus_id"]),str(r["reg_no"]),str(r["corporation"]),
-                             str(r["route_no"]),str(r["route"]),str(r["driver"]),
-                             str(r["bus_type"]),capacity,available,str(r["status"]),
-                             str(r["depot"]),now))
-                    c.commit()
-                    c.close()
-                    st.success(f"{len(data)} buses imported/updated.")
-                    st.rerun()
-
-        st.write("### Database Export")
-        fleet = query("SELECT * FROM buses")
-        st.download_button("⬇️ Download Fleet CSV", fleet.to_csv(index=False).encode(),
-                           "smart_bus_fleet.csv", "text/csv")
-
-        if st.button("🚪 Logout"):
+                st.error("Invalid credentials")
+    else:
+        st.success("Admin Active")
+        if st.button("Logout", use_container_width=True):
             st.session_state.admin = False
             st.rerun()
 
-st.caption("SMART BUS • Python + Streamlit")
+admin = st.session_state.admin
+
+# =========================================================
+# 1. TRAVELER PORTAL (OMIO SEARCH & BOOKING EXPERIENCE)
+# =========================================================
+if view_mode == "Traveler Portal":
+    # SEARCH BAR CONTAINER
+    with st.container():
+        st.markdown("#### Where do you want to travel?")
+        routes_df = query("SELECT DISTINCT source, destination FROM routes WHERE active=1")
+        sources = sorted(list(set(routes_df["source"].tolist()))) if not routes_df.empty else ["Chennai", "Coimbatore"]
+        destinations = sorted(list(set(routes_df["destination"].tolist()))) if not routes_df.empty else ["Coimbatore", "Salem"]
+
+        col1, col2, col3, col4 = st.columns([1.2, 1.2, 1, 0.8])
+        with col1:
+            from_city = st.selectbox("From", sources, index=0)
+        with col2:
+            to_city = st.selectbox("To", destinations, index=min(1, len(destinations)-1))
+        with col3:
+            journey_date = st.date_input("Travel Date")
+        with col4:
+            st.write("")
+            st.write("")
+            search_pressed = st.button("Search Buses", type="primary", use_container_width=True)
+
+    st.markdown("---")
+
+    booking_tab, track_tab = st.tabs(["⚡ Available Departures", "🎫 Manage / Print Ticket"])
+
+    with booking_tab:
+        # Query matching buses
+        buses_query = query("""
+            SELECT b.*, r.distance_km, r.stops 
+            FROM buses b
+            LEFT JOIN routes r ON b.route_no = r.route_no
+            WHERE b.status != 'Inactive'
+        """)
+
+        # Filter by city or route match
+        filtered_buses = buses_query[
+            buses_query['route'].str.contains(from_city, case=False, na=False) |
+            buses_query['route'].str.contains(to_city, case=False, na=False)
+        ] if not buses_query.empty else pd.DataFrame()
+
+        if filtered_buses.empty:
+            st.info(f"No direct departures found between **{from_city}** and **{to_city}**. Showing all running express buses below:")
+            filtered_buses = buses_query.head(4)
+
+        # Render Tickets with Omio-style layouts
+        for idx, bus in filtered_buses.iterrows():
+            seats_left = int(bus['available_seats'])
+            distance = float(bus['distance_km']) if pd.notnull(bus['distance_km']) else 120.0
+            fare_est = max(120.0, round(distance * 1.45, 0))
+
+            card_col, action_col = st.columns([3, 1])
+            with card_col:
+                st.markdown(f"""
+                <div class="ticket-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                        <span class="operator-badge">{bus['corporation']}</span>
+                        <span style="font-size:12px; color:{'#16A34A' if seats_left > 10 else '#DC2626'}; font-weight:700;">
+                            ● {seats_left} seats remaining
+                        </span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div class="timeline-text">20:30</div>
+                            <div class="timeline-sub">{from_city}</div>
+                        </div>
+                        <div style="text-align:center; flex:1; padding:0 24px;">
+                            <div style="font-size:11px; color:#94A3B8; font-weight:600;">{round(distance/45, 1)} hrs</div>
+                            <div style="height:2px; background:#CBD5E1; position:relative; margin:6px 0;">
+                                <div style="width:6px; height:6px; background:#475569; border-radius:50%; position:absolute; top:-2px; left:0;"></div>
+                                <div style="width:6px; height:6px; background:#475569; border-radius:50%; position:absolute; top:-2px; right:0;"></div>
+                            </div>
+                            <div style="font-size:11px; color:#64748B;">Direct • {bus['bus_type']}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div class="timeline-text">04:15</div>
+                            <div class="timeline-sub">{to_city}</div>
+                        </div>
+                    </div>
+                    <div style="margin-top:16px; display:flex; gap:8px;">
+                        <span class="amenity-chip">⚡ Live GPS</span>
+                        <span class="amenity-chip">🔌 Charging Ports</span>
+                        <span class="amenity-chip">❄️ {bus['bus_type']}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with action_col:
+                st.markdown(f"""
+                <div style="padding-top:20px; text-align:center;">
+                    <div style="font-size:11px; color:#64748B; font-weight:600;">FARE / PASSENGER</div>
+                    <div class="price-tag">₹{int(fare_est)}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                with st.popover(f"Select Seats", use_container_width=True):
+                    st.write(f"**Reserve on {bus['reg_no']}**")
+                    passenger_name = st.text_input("Full Name", key=f"name_{bus['bus_id']}")
+                    passenger_phone = st.text_input("Mobile Number", key=f"phone_{bus['bus_id']}")
+                    seat_count = st.number_input("Passengers", 1, min(seats_left, 6), 1, key=f"seat_{bus['bus_id']}")
+
+                    total_price = seat_count * fare_est
+                    st.markdown(f"**Total Payable:** ₹{total_price:,.2f}")
+
+                    if st.button("Confirm Booking", key=f"btn_{bus['bus_id']}", type="primary", use_container_width=True):
+                        if not passenger_name or not passenger_phone:
+                            st.error("Please supply contact details")
+                        else:
+                            pnr = "SB" + datetime.now().strftime("%y%m%d%H%M%S")[-8:]
+                            run("""INSERT INTO passengers VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                                (pnr, passenger_name, passenger_phone, bus['bus_id'],
+                                 str(bus['route_no']), from_city, to_city,
+                                 int(seat_count), float(total_price), "Booked",
+                                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                            run("UPDATE buses SET available_seats=available_seats-? WHERE bus_id=?",
+                                (int(seat_count), bus['bus_id']))
+                            st.balloons()
+                            st.success(f"Confirmed! PNR: {pnr}")
+                            st.rerun()
+
+    with track_tab:
+        st.subheader("Your Journey Itinerary")
+        ticket_pnr = st.text_input("Enter 10-Digit PNR Code", placeholder="e.g. SB2610081234").strip()
+        if ticket_pnr:
+            pnr_record = query("SELECT * FROM passengers WHERE pnr=?", (ticket_pnr,))
+            if not pnr_record.empty:
+                t = pnr_record.iloc[0]
+                st.markdown(f"""
+                <div class="ticket-card" style="border-left:5px solid #16A34A;">
+                    <div style="display:flex; justify-content:space-between;">
+                        <h4>PNR: {t['pnr']}</h4>
+                        <span style="font-weight:700; color:{'#16A34A' if t['status']=='Booked' else '#DC2626'}">{t['status']}</span>
+                    </div>
+                    <p style="margin:4px 0;"><strong>Passenger:</strong> {t['name']} ({t['phone']})</p>
+                    <p style="margin:4px 0;"><strong>Route:</strong> {t['source']} ➔ {t['destination']}</p>
+                    <p style="margin:4px 0;"><strong>Reserved Seats:</strong> {t['seats']} | <strong>Total Paid:</strong> ₹{t['fare']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if t['status'] == "Booked":
+                    if st.button("Cancel Reservation", type="secondary"):
+                        run("UPDATE passengers SET status='Cancelled' WHERE pnr=?", (t['pnr'],))
+                        run("UPDATE buses SET available_seats=available_seats+? WHERE bus_id=?", (int(t['seats']), t['bus_id']))
+                        st.toast("Booking Cancelled & Seat Restored", icon="⚠️")
+                        st.rerun()
+            else:
+                st.error("No ticket found with this PNR.")
+
+# =========================================================
+# 2. FLEET & DISPATCH OPS
+# =========================================================
+elif view_mode == "Fleet & Dispatch Ops":
+    st.markdown("### 🚌 Fleet & Transit Administration")
+
+    tab1, tab2, tab3 = st.tabs(["Active Fleet Directory", "Register Bus Unit", "Depot Routes"])
+
+    with tab1:
+        f_col1, f_col2 = st.columns([2, 1])
+        with f_col1:
+            q_search = st.text_input("Filter by Registration, Corporation, or Corridor")
+        with f_col2:
+            q_corp = st.selectbox("Corporation Filter", ["All"] + CORPORATIONS)
+
+        fleet_df = query("SELECT * FROM buses WHERE status != 'Inactive'")
+        if q_corp != "All":
+            fleet_df = fleet_df[fleet_df['corporation'] == q_corp]
+        if q_search:
+            s = q_search.lower()
+            fleet_df = fleet_df[fleet_df.apply(lambda r: s in " ".join(map(str, r.values)).lower(), axis=1)]
+
+        st.dataframe(fleet_df, use_container_width=True, hide_index=True)
+
+    with tab2:
+        if not admin:
+            st.warning("⚠️ Restricted area. Login via Depot / Admin Portal in the sidebar to add units.")
+        else:
+            with st.form("bus_reg_form"):
+                c1, c2, c3 = st.columns(3)
+                bid = c1.text_input("Bus ID", "BUS" + str(datetime.now().strftime("%f")[:3]))
+                reg = c2.text_input("Registration Plate", "TN")
+                corp = c3.selectbox("Corporation", CORPORATIONS)
+
+                c4, c5, c6 = st.columns(3)
+                rt_no = c4.text_input("Assigned Route No", "R12")
+                rt_desc = c5.text_input("Route Name", "Erode - Coimbatore")
+                driver_name = c6.text_input("Assigned Crew", "Govt Driver")
+
+                c7, c8, c9 = st.columns(3)
+                btype = c7.selectbox("Bus Classification", BUS_TYPES)
+                cap = c8.number_input("Max Capacity", 20, 70, 50)
+                status = c9.selectbox("Operational Status", STATUSES)
+
+                submit = st.form_submit_button("Deploy Bus to Fleet", use_container_width=True)
+                if submit:
+                    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    run("""INSERT INTO buses VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(bus_id) DO UPDATE SET
+                           reg_no=excluded.reg_no, corporation=excluded.corporation,
+                           route_no=excluded.route_no, route=excluded.route,
+                           driver=excluded.driver, bus_type=excluded.bus_type,
+                           capacity=excluded.capacity, available_seats=excluded.capacity,
+                           status=excluded.status, depot=excluded.depot, updated_at=excluded.updated_at""",
+                        (bid.upper(), reg.upper(), corp, rt_no, rt_desc, driver_name,
+                         btype, int(cap), int(cap), status, "Head Depot", now))
+                    st.success(f"Bus {bid} dispatched successfully.")
+                    st.rerun()
+
+    with tab3:
+        st.markdown("#### Operational Route Corridors")
+        st.dataframe(query("SELECT * FROM routes WHERE active=1"), use_container_width=True, hide_index=True)
+
+# =========================================================
+# 3. ANALYTICS
+# =========================================================
+elif view_mode == "System Analytics":
+    st.markdown("### 📊 Network Capacity & Demand Analytics")
+
+    b_data = query("SELECT * FROM buses WHERE status != 'Inactive'")
+    p_data = query("SELECT * FROM passengers WHERE status = 'Booked'")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Active Buses", len(b_data))
+    m2.metric("Seats Reserved", int(p_data["seats"].sum()) if not p_data.empty else 0)
+    m3.metric("Passenger Revenue", f"₹{p_data['fare'].sum():,.0f}" if not p_data.empty else "₹0")
+    m4.metric("Avg Seat Occupancy", f"{round(((b_data['capacity'] - b_data['available_seats']).sum() / b_data['capacity'].sum()) * 100, 1)}%" if not b_data.empty else "0%")
+
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("##### Fleet Share by Corporation")
+        if not b_data.empty:
+            corp_counts = b_data.groupby("corporation").size()
+            st.bar_chart(corp_counts)
+    with c2:
+        st.markdown("##### Peak Booking Volume (Hourly)")
+        if not p_data.empty:
+            p_data['hour'] = pd.to_datetime(p_data['booked_at']).dt.hour
+            st.bar_chart(p_data.groupby('hour').size())
+        else:
+            st.info("No passenger transactions recorded yet.")
