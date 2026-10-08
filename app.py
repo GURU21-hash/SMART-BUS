@@ -1,1725 +1,2212 @@
-# app.py
-# Smart Bus - Bus Route & Passenger Management System
-# Python 3.13 | Tkinter | SQLite | Standard Library Only
-
-import sqlite3
-import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime
-import random
-import webbrowser
-import math
-
-DB_NAME = "smart_bus.db"
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-class Database:
-    def __init__(self):
-        self.conn = sqlite3.connect(DB_NAME)
-        self.conn.row_factory = sqlite3.Row
-        self.create_tables()
-        self.seed_data()
-
-    def create_tables(self):
-        cur = self.conn.cursor()
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS buses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                bus_id TEXT UNIQUE NOT NULL,
-                registration TEXT,
-                route_number TEXT,
-                driver TEXT,
-                capacity INTEGER NOT NULL,
-                available_seats INTEGER NOT NULL,
-                status TEXT NOT NULL
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS routes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                route_number TEXT UNIQUE NOT NULL,
-                source TEXT NOT NULL,
-                destination TEXT NOT NULL,
-                distance REAL DEFAULT 0,
-                fare REAL DEFAULT 0,
-                stops TEXT DEFAULT ''
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS passengers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                phone TEXT,
-                age INTEGER,
-                gender TEXT
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS bookings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pnr TEXT UNIQUE NOT NULL,
-                passenger_name TEXT NOT NULL,
-                phone TEXT,
-                bus_id TEXT,
-                route_number TEXT,
-                source TEXT,
-                destination TEXT,
-                travel_date TEXT,
-                seat_number TEXT,
-                fare REAL,
-                scheme TEXT,
-                status TEXT DEFAULT 'CONFIRMED',
-                created_at TEXT
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS official_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT,
-                url TEXT,
-                category TEXT
-            )
-        """)
-
-        self.conn.commit()
-
-    def seed_data(self):
-        cur = self.conn.cursor()
-
-        cur.execute("SELECT COUNT(*) FROM buses")
-        if cur.fetchone()[0] == 0:
-            cur.execute("""
-                INSERT INTO buses
-                (bus_id, registration, route_number, driver, capacity,
-                 available_seats, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                "BUS101",
-                "TN 33 AB 1234",
-                "R12",
-                "Demo Driver",
-                50,
-                8,
-                "Running"
-            ))
-
-            cur.execute("""
-                INSERT INTO buses
-                (bus_id, registration, route_number, driver, capacity,
-                 available_seats, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                "BUS102",
-                "TN 38 CD 5678",
-                "R13",
-                "Kumar",
-                52,
-                30,
-                "Available"
-            ))
-
-        cur.execute("SELECT COUNT(*) FROM routes")
-        if cur.fetchone()[0] == 0:
-            routes = [
-                ("R12", "Erode", "Coimbatore", 100, 120,
-                 "Erode, Perundurai, Chithode, Bhavani, Avinashi, Coimbatore"),
-                ("R13", "Salem", "Erode", 65, 90,
-                 "Salem, Sankari, Bhavani, Erode"),
-                ("R14", "Chennai", "Coimbatore", 510, 550,
-                 "Chennai, Vellore, Salem, Erode, Tiruppur, Coimbatore"),
-                ("R15", "Madurai", "Coimbatore", 215, 260,
-                 "Madurai, Dindigul, Karur, Erode, Tiruppur, Coimbatore")
-            ]
-
-            cur.executemany("""
-                INSERT INTO routes
-                (route_number, source, destination, distance, fare, stops)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, routes)
-
-        cur.execute("SELECT COUNT(*) FROM official_links")
-        if cur.fetchone()[0] == 0:
-            links = [
-                ("TNSTC Online Booking",
-                 "https://www.tnstc.in/OTRSOnline/",
-                 "Transport"),
-                ("TNSTC Main Website",
-                 "https://www.tnstc.in/",
-                 "Transport"),
-                ("MTC Chennai",
-                 "https://mtcbus.tn.gov.in/",
-                 "Transport"),
-                ("Tamil Nadu Government",
-                 "https://www.tn.gov.in/",
-                 "Government"),
-                ("TN e-Sevai",
-                 "https://www.tnesevai.tn.gov.in/",
-                 "Government"),
-                ("Parivahan",
-                 "https://parivahan.gov.in/",
-                 "Transport"),
-                ("Google Maps",
-                 "https://www.google.com/maps/",
-                 "Maps"),
-                ("Tamil Nadu Police",
-                 "https://eservices.tnpolice.gov.in/",
-                 "Emergency")
-            ]
-
-            cur.executemany("""
-                INSERT INTO official_links (name, url, category)
-                VALUES (?, ?, ?)
-            """, links)
-
-        self.conn.commit()
-
-    def execute(self, query, params=()):
-        cur = self.conn.cursor()
-        cur.execute(query, params)
-        self.conn.commit()
-        return cur
-
-    def fetchall(self, query, params=()):
-        return self.conn.execute(query, params).fetchall()
-
-    def fetchone(self, query, params=()):
-        return self.conn.execute(query, params).fetchone()
-
-
-# ============================================================
-# MAIN APPLICATION
-# ============================================================
-
-class SmartBusApp(tk.Tk):
-
-    def __init__(self):
-        super().__init__()
-
-        self.title("SMART BUS - Bus Route & Passenger Management System")
-        self.geometry("1400x850")
-        self.minsize(1100, 700)
-
-        self.db = Database()
-
-        self.configure(bg="#eef3f8")
-
-        self.setup_style()
-        self.create_header()
-        self.create_navigation()
-        self.create_main_area()
-        self.show_dashboard()
-
-    # --------------------------------------------------------
-    # STYLE
-    # --------------------------------------------------------
-
-    def setup_style(self):
-        style = ttk.Style(self)
-
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-
-        style.configure(
-            "Treeview",
-            rowheight=30,
-            font=("Segoe UI", 10)
-        )
-
-        style.configure(
-            "Treeview.Heading",
-            font=("Segoe UI", 10, "bold")
-        )
-
-        style.configure(
-            "TButton",
-            font=("Segoe UI", 10, "bold"),
-            padding=7
-        )
-
-        style.configure(
-            "TLabel",
-            background="#eef3f8",
-            font=("Segoe UI", 10)
-        )
-
-        style.configure(
-            "Title.TLabel",
-            font=("Segoe UI", 22, "bold"),
-            background="#12355b",
-            foreground="white"
-        )
-
-    # --------------------------------------------------------
-    # HEADER
-    # --------------------------------------------------------
-
-    def create_header(self):
-        header = tk.Frame(self, bg="#12355b", height=75)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-
-        tk.Label(
-            header,
-            text="🚌 SMART BUS",
-            font=("Segoe UI", 24, "bold"),
-            fg="white",
-            bg="#12355b"
-        ).pack(side="left", padx=25)
-
-        tk.Label(
-            header,
-            text="Bus Route & Passenger Management System",
-            font=("Segoe UI", 12),
-            fg="#dcecff",
-            bg="#12355b"
-        ).pack(side="left")
-
-        tk.Button(
-            header,
-            text="🚨 Emergency",
-            command=self.show_emergency,
-            bg="#c62828",
-            fg="white",
-            activebackground="#8e0000",
-            activeforeground="white",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat",
-            padx=15,
-            pady=8
-        ).pack(side="right", padx=20)
-
-    # --------------------------------------------------------
-    # NAVIGATION
-    # --------------------------------------------------------
-
-    def create_navigation(self):
-        nav = tk.Frame(self, bg="#1d4e89", height=55)
-        nav.pack(fill="x")
-        nav.pack_propagate(False)
-
-        buttons = [
-            ("Dashboard", self.show_dashboard),
-            ("Buses", self.show_buses),
-            ("Routes", self.show_routes),
-            ("Passengers", self.show_passengers),
-            ("Booking", self.show_booking),
-            ("PNR Search", self.show_pnr),
-            ("Reports", self.show_reports),
-            ("Admin", self.show_admin),
-        ]
-
-        for text, command in buttons:
-            tk.Button(
-                nav,
-                text=text,
-                command=command,
-                bg="#1d4e89",
-                fg="white",
-                activebackground="#2867ad",
-                activeforeground="white",
-                relief="flat",
-                font=("Segoe UI", 10, "bold"),
-                padx=15
-            ).pack(side="left", fill="y")
-
-    # --------------------------------------------------------
-    # MAIN AREA
-    # --------------------------------------------------------
-
-    def create_main_area(self):
-        self.main = tk.Frame(self, bg="#eef3f8")
-        self.main.pack(fill="both", expand=True)
-
-    def clear_main(self):
-        for widget in self.main.winfo_children():
-            widget.destroy()
-
-    def page_title(self, title, subtitle=""):
-        tk.Label(
-            self.main,
-            text=title,
-            font=("Segoe UI", 22, "bold"),
-            bg="#eef3f8",
-            fg="#12355b"
-        ).pack(anchor="w", padx=25, pady=(20, 3))
-
-        if subtitle:
-            tk.Label(
-                self.main,
-                text=subtitle,
-                font=("Segoe UI", 10),
-                bg="#eef3f8",
-                fg="#555"
-            ).pack(anchor="w", padx=27, pady=(0, 15))
-
-    # ========================================================
-    # DASHBOARD
-    # ========================================================
-
-    def show_dashboard(self):
-        self.clear_main()
-
-        self.page_title(
-            "Dashboard",
-            "Welcome to Smart Bus Management System"
-        )
-
-        stats_frame = tk.Frame(self.main, bg="#eef3f8")
-        stats_frame.pack(fill="x", padx=25)
-
-        buses = self.db.fetchone("SELECT COUNT(*) AS c FROM buses")["c"]
-        routes = self.db.fetchone("SELECT COUNT(*) AS c FROM routes")["c"]
-        passengers = self.db.fetchone(
-            "SELECT COUNT(*) AS c FROM passengers"
-        )["c"]
-        bookings = self.db.fetchone(
-            "SELECT COUNT(*) AS c FROM bookings WHERE status='CONFIRMED'"
-        )["c"]
-
-        cards = [
-            ("🚌", "Total Buses", buses),
-            ("🗺", "Routes", routes),
-            ("👥", "Passengers", passengers),
-            ("🎫", "Confirmed Tickets", bookings),
-        ]
-
-        for icon, title, value in cards:
-            card = tk.Frame(
-                stats_frame,
-                bg="white",
-                highlightbackground="#d4dce5",
-                highlightthickness=1
-            )
-            card.pack(
-                side="left",
-                fill="both",
-                expand=True,
-                padx=7
-            )
-
-            tk.Label(
-                card,
-                text=icon,
-                font=("Segoe UI Emoji", 28),
-                bg="white"
-            ).pack(pady=(15, 0))
-
-            tk.Label(
-                card,
-                text=str(value),
-                font=("Segoe UI", 24, "bold"),
-                fg="#12355b",
-                bg="white"
-            ).pack()
-
-            tk.Label(
-                card,
-                text=title,
-                font=("Segoe UI", 10),
-                fg="#666",
-                bg="white"
-            ).pack(pady=(0, 15))
-
-        # Challenge section
-        challenge = tk.LabelFrame(
-            self.main,
-            text=" Special Challenge Bus ",
-            font=("Segoe UI", 12, "bold"),
-            bg="white",
-            fg="#12355b",
-            padx=15,
-            pady=15
-        )
-        challenge.pack(fill="x", padx=25, pady=25)
-
-        values = [
-            ("Bus", "BUS101"),
-            ("Route", "R12"),
-            ("Source", "Erode"),
-            ("Destination", "Coimbatore"),
-            ("Capacity", "50"),
-            ("Passengers", "42"),
-            ("Available Seats", "8"),
-            ("Status", "Running")
-        ]
-
-        for i, (label, value) in enumerate(values):
-            frame = tk.Frame(challenge, bg="white")
-            frame.grid(
-                row=i // 4,
-                column=i % 4,
-                sticky="ew",
-                padx=10,
-                pady=10
-            )
-
-            tk.Label(
-                frame,
-                text=label,
-                bg="white",
-                fg="#777",
-                font=("Segoe UI", 9)
-            ).pack()
-
-            tk.Label(
-                frame,
-                text=value,
-                bg="white",
-                fg="#12355b",
-                font=("Segoe UI", 12, "bold")
-            ).pack()
-
-        for i in range(4):
-            challenge.columnconfigure(i, weight=1)
-
-        # Quick actions
-        quick = tk.LabelFrame(
-            self.main,
-            text=" Quick Actions ",
-            font=("Segoe UI", 12, "bold"),
-            bg="white",
-            fg="#12355b",
-            padx=15,
-            pady=15
-        )
-        quick.pack(fill="x", padx=25)
-
-        actions = [
-            ("🎫 Book Ticket", self.show_booking),
-            ("🚌 Manage Buses", self.show_buses),
-            ("🗺 Manage Routes", self.show_routes),
-            ("👥 Passengers", self.show_passengers),
-            ("🔎 Search PNR", self.show_pnr),
-            ("📊 Reports", self.show_reports)
-        ]
-
-        for text, command in actions:
-            tk.Button(
-                quick,
-                text=text,
-                command=command,
-                bg="#1d4e89",
-                fg="white",
-                relief="flat",
-                font=("Segoe UI", 10, "bold"),
-                padx=15,
-                pady=10
-            ).pack(side="left", padx=7, pady=8)
-
-    # ========================================================
-    # BUSES
-    # ========================================================
-
-    def show_buses(self):
-        self.clear_main()
-
-        self.page_title(
-            "Bus Management",
-            "Add, update, search and manage buses"
-        )
-
-        form = tk.LabelFrame(
-            self.main,
-            text=" Bus Details ",
-            bg="white",
-            fg="#12355b",
-            font=("Segoe UI", 11, "bold"),
-            padx=15,
-            pady=15
-        )
-        form.pack(fill="x", padx=25)
-
-        fields = [
-            "Bus ID",
-            "Registration",
-            "Route Number",
-            "Driver",
-            "Capacity",
-            "Available Seats",
-            "Status"
-        ]
-
-        entries = {}
-
-        for i, field in enumerate(fields):
-            tk.Label(
-                form,
-                text=field,
-                bg="white"
-            ).grid(
-                row=i // 4 * 2,
-                column=i % 4,
-                sticky="w",
-                padx=8,
-                pady=(5, 0)
-            )
-
-            if field == "Status":
-                entry = ttk.Combobox(
-                    form,
-                    values=["Running", "Available", "Maintenance", "Inactive"],
-                    state="readonly"
-                )
-                entry.set("Available")
-            else:
-                entry = tk.Entry(form, width=25)
-
-            entry.grid(
-                row=i // 4 * 2 + 1,
-                column=i % 4,
-                sticky="ew",
-                padx=8,
-                pady=(0, 8)
-            )
-
-            entries[field] = entry
-
-        for i in range(4):
-            form.columnconfigure(i, weight=1)
-
-        def add_bus():
-            try:
-                capacity = int(entries["Capacity"].get())
-                available = int(entries["Available Seats"].get())
-
-                if capacity <= 0:
-                    raise ValueError
-
-                self.db.execute("""
-                    INSERT INTO buses
-                    (bus_id, registration, route_number, driver,
-                     capacity, available_seats, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    entries["Bus ID"].get().strip(),
-                    entries["Registration"].get().strip(),
-                    entries["Route Number"].get().strip(),
-                    entries["Driver"].get().strip(),
-                    capacity,
-                    available,
-                    entries["Status"].get()
-                ))
-
-                messagebox.showinfo("Success", "Bus added successfully.")
-                refresh()
-
-            except ValueError:
-                messagebox.showerror(
-                    "Error",
-                    "Capacity and available seats must be numbers."
-                )
-            except sqlite3.IntegrityError:
-                messagebox.showerror(
-                    "Error",
-                    "Bus ID already exists."
-                )
-
-        def delete_bus():
-            selected = tree.selection()
-
-            if not selected:
-                messagebox.showwarning(
-                    "Select Bus",
-                    "Please select a bus."
-                )
-                return
-
-            values = tree.item(selected[0], "values")
-
-            if messagebox.askyesno(
-                "Delete",
-                f"Delete bus {values[0]}?"
-            ):
-                self.db.execute(
-                    "DELETE FROM buses WHERE bus_id=?",
-                    (values[0],)
-                )
-                refresh()
-
-        def refresh():
-            for item in tree.get_children():
-                tree.delete(item)
-
-            rows = self.db.fetchall("""
-                SELECT bus_id, registration, route_number, driver,
-                       capacity, available_seats, status
-                FROM buses
-                ORDER BY bus_id
-            """)
-
-            for row in rows:
-                tree.insert("", "end", values=tuple(row))
-
-        tk.Button(
-            form,
-            text="➕ Add Bus",
-            command=add_bus,
-            bg="#198754",
-            fg="white",
-            relief="flat",
-            padx=20,
-            pady=7
-        ).grid(row=4, column=0, padx=8, pady=10)
-
-        tk.Button(
-            form,
-            text="🗑 Delete Selected",
-            command=delete_bus,
-            bg="#c62828",
-            fg="white",
-            relief="flat",
-            padx=20,
-            pady=7
-        ).grid(row=4, column=1, padx=8, pady=10)
-
-        table_frame = tk.Frame(self.main, bg="#eef3f8")
-        table_frame.pack(fill="both", expand=True, padx=25, pady=15)
-
-        columns = (
-            "Bus ID",
-            "Registration",
-            "Route",
-            "Driver",
-            "Capacity",
-            "Available",
-            "Status"
-        )
-
-        tree = ttk.Treeview(
-            table_frame,
-            columns=columns,
-            show="headings"
-        )
-
-        for col in columns:
-            tree.heading(col, text=col)
-            tree.column(col, width=130)
-
-        scrollbar = ttk.Scrollbar(
-            table_frame,
-            orient="vertical",
-            command=tree.yview
-        )
-
-        tree.configure(yscrollcommand=scrollbar.set)
-
-        tree.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        refresh()
-
-    # ========================================================
-    # ROUTES
-    # ========================================================
-
-    def show_routes(self):
-        self.clear_main()
-
-        self.page_title(
-            "Route Management",
-            "Manage routes, distances, fares and stops"
-        )
-
-        form = tk.LabelFrame(
-            self.main,
-            text=" Route Details ",
-            bg="white",
-            fg="#12355b",
-            font=("Segoe UI", 11, "bold"),
-            padx=15,
-            pady=15
-        )
-        form.pack(fill="x", padx=25)
-
-        labels = [
-            "Route Number",
-            "Source",
-            "Destination",
-            "Distance (km)",
-            "Fare (₹)",
-            "Stops"
-        ]
-
-        entries = {}
-
-        for i, label in enumerate(labels):
-            tk.Label(
-                form,
-                text=label,
-                bg="white"
-            ).grid(
-                row=0,
-                column=i,
-                padx=7,
-                sticky="w"
-            )
-
-            entry = tk.Entry(form, width=22)
-            entry.grid(
-                row=1,
-                column=i,
-                padx=7,
-                pady=7
-            )
-
-            entries[label] = entry
-
-        def add_route():
-            try:
-                distance = float(entries["Distance (km)"].get())
-                fare = float(entries["Fare (₹)"].get())
-
-                self.db.execute("""
-                    INSERT INTO routes
-                    (route_number, source, destination,
-                     distance, fare, stops)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    entries["Route Number"].get().strip(),
-                    entries["Source"].get().strip(),
-                    entries["Destination"].get().strip(),
-                    distance,
-                    fare,
-                    entries["Stops"].get().strip()
-                ))
-
-                messagebox.showinfo(
-                    "Success",
-                    "Route added successfully."
-                )
-                refresh()
-
-            except ValueError:
-                messagebox.showerror(
-                    "Error",
-                    "Distance and fare must be numeric."
-                )
-            except sqlite3.IntegrityError:
-                messagebox.showerror(
-                    "Error",
-                    "Route number already exists."
-                )
-
-        tk.Button(
-            form,
-            text="➕ Add Route",
-            command=add_route,
-            bg="#198754",
-            fg="white",
-            relief="flat",
-            padx=20
-        ).grid(row=2, column=0, pady=10)
-
-        table_frame = tk.Frame(self.main, bg="#eef3f8")
-        table_frame.pack(fill="both", expand=True, padx=25, pady=15)
-
-        columns = (
-            "Route",
-            "Source",
-            "Destination",
-            "Distance",
-            "Fare",
-            "Stops"
-        )
-
-        tree = ttk.Treeview(
-            table_frame,
-            columns=columns,
-            show="headings"
-        )
-
-        for col in columns:
-            tree.heading(col, text=col)
-            tree.column(col, width=150)
-
-        tree.pack(fill="both", expand=True)
-
-        def refresh():
-            for item in tree.get_children():
-                tree.delete(item)
-
-            rows = self.db.fetchall("""
-                SELECT route_number, source, destination,
-                       distance, fare, stops
-                FROM routes
-                ORDER BY route_number
-            """)
-
-            for row in rows:
-                tree.insert("", "end", values=tuple(row))
-
-        refresh()
-
-    # ========================================================
-    # PASSENGERS
-    # ========================================================
-
-    def show_passengers(self):
-        self.clear_main()
-
-        self.page_title(
-            "Passenger Management",
-            "Add and manage passenger information"
-        )
-
-        form = tk.LabelFrame(
-            self.main,
-            text=" Passenger Details ",
-            bg="white",
-            fg="#12355b",
-            font=("Segoe UI", 11, "bold"),
-            padx=15,
-            pady=15
-        )
-        form.pack(fill="x", padx=25)
-
-        name = tk.Entry(form, width=25)
-        phone = tk.Entry(form, width=20)
-        age = tk.Entry(form, width=10)
-        gender = ttk.Combobox(
-            form,
-            values=["Male", "Female", "Other"],
-            state="readonly",
-            width=15
-        )
-        gender.set("Male")
-
-        fields = [
-            ("Name", name),
-            ("Phone", phone),
-            ("Age", age),
-            ("Gender", gender)
-        ]
-
-        for i, (label, widget) in enumerate(fields):
-            tk.Label(
-                form,
-                text=label,
-                bg="white"
-            ).grid(row=0, column=i, padx=10)
-
-            widget.grid(row=1, column=i, padx=10, pady=7)
-
-        def add_passenger():
-            if not name.get().strip():
-                messagebox.showwarning(
-                    "Required",
-                    "Passenger name is required."
-                )
-                return
-
-            try:
-                passenger_age = int(age.get())
-            except ValueError:
-                messagebox.showerror(
-                    "Error",
-                    "Age must be a number."
-                )
-                return
-
-            self.db.execute("""
-                INSERT INTO passengers
-                (name, phone, age, gender)
-                VALUES (?, ?, ?, ?)
-            """, (
-                name.get().strip(),
-                phone.get().strip(),
-                passenger_age,
-                gender.get()
-            ))
-
-            messagebox.showinfo(
-                "Success",
-                "Passenger added successfully."
-            )
-
-            name.delete(0, "end")
-            phone.delete(0, "end")
-            age.delete(0, "end")
-            refresh()
-
-        tk.Button(
-            form,
-            text="➕ Add Passenger",
-            command=add_passenger,
-            bg="#198754",
-            fg="white",
-            relief="flat",
-            padx=20
-        ).grid(row=2, column=0, pady=10)
-
-        table_frame = tk.Frame(self.main, bg="#eef3f8")
-        table_frame.pack(fill="both", expand=True, padx=25, pady=15)
-
-        columns = (
-            "ID",
-            "Name",
-            "Phone",
-            "Age",
-            "Gender"
-        )
-
-        tree = ttk.Treeview(
-            table_frame,
-            columns=columns,
-            show="headings"
-        )
-
-        for col in columns:
-            tree.heading(col, text=col)
-            tree.column(col, width=150)
-
-        tree.pack(fill="both", expand=True)
-
-        def refresh():
-            for item in tree.get_children():
-                tree.delete(item)
-
-            rows = self.db.fetchall("""
-                SELECT id, name, phone, age, gender
-                FROM passengers
-                ORDER BY id DESC
-            """)
-
-            for row in rows:
-                tree.insert("", "end", values=tuple(row))
-
-        refresh()
-
-    # ========================================================
-    # BOOKING
-    # ========================================================
-
-    def show_booking(self):
-        self.clear_main()
-
-        self.page_title(
-            "Ticket Booking",
-            "Book a Smart Bus ticket"
-        )
-
-        container = tk.Frame(self.main, bg="white")
-        container.pack(fill="both", expand=True, padx=25, pady=5)
-
-        fields = [
-            "Passenger Name",
-            "Phone",
-            "Bus ID",
-            "Route",
-            "Source",
-            "Destination",
-            "Travel Date",
-            "Seat Number",
-            "Scheme"
-        ]
-
-        entries = {}
-
-        for i, field in enumerate(fields):
-            row = i // 3
-            col = i % 3
-
-            tk.Label(
-                container,
-                text=field,
-                bg="white",
-                fg="#444"
-            ).grid(
-                row=row * 2,
-                column=col,
-                sticky="w",
-                padx=25,
-                pady=(20, 3)
-            )
-
-            if field == "Scheme":
-                widget = ttk.Combobox(
-                    container,
-                    values=[
-                        "GENERAL",
-                        "WOMAN-ZERO",
-                        "STUDENT",
-                        "SENIOR"
-                    ],
-                    state="readonly",
-                    width=30
-                )
-                widget.set("GENERAL")
-            elif field == "Bus ID":
-                widget = ttk.Combobox(
-                    container,
-                    values=[
-                        row["bus_id"]
-                        for row in self.db.fetchall(
-                            "SELECT bus_id FROM buses ORDER BY bus_id"
-                        )
-                    ],
-                    width=30
-                )
-            elif field == "Route":
-                widget = ttk.Combobox(
-                    container,
-                    values=[
-                        row["route_number"]
-                        for row in self.db.fetchall(
-                            "SELECT route_number FROM routes ORDER BY route_number"
-                        )
-                    ],
-                    width=30
-                )
-            else:
-                widget = tk.Entry(container, width=32)
-
-            widget.grid(
-                row=row * 2 + 1,
-                column=col,
-                padx=25,
-                pady=(0, 10),
-                sticky="ew"
-            )
-
-            entries[field] = widget
-
-        def calculate_fare():
-            route = entries["Route"].get().strip()
-
-            row = self.db.fetchone(
-                "SELECT fare, distance FROM routes WHERE route_number=?",
-                (route,)
-            )
-
-            if not row:
-                messagebox.showerror(
-                    "Error",
-                    "Route not found."
-                )
-                return
-
-            fare = float(row["fare"])
-
-            scheme = entries["Scheme"].get()
-
-            if scheme == "WOMAN-ZERO":
-                fare = 0
-            elif scheme == "STUDENT":
-                fare *= 0.5
-            elif scheme == "SENIOR":
-                fare *= 0.5
-
-            fare_label.config(
-                text=f"Estimated Fare: ₹{fare:.2f}"
-            )
-
-        def book_ticket():
-            passenger = entries["Passenger Name"].get().strip()
-            bus_id = entries["Bus ID"].get().strip()
-            route = entries["Route"].get().strip()
-
-            if not passenger or not bus_id or not route:
-                messagebox.showwarning(
-                    "Required",
-                    "Passenger, Bus ID and Route are required."
-                )
-                return
-
-            bus = self.db.fetchone(
-                "SELECT * FROM buses WHERE bus_id=?",
-                (bus_id,)
-            )
-
-            if not bus:
-                messagebox.showerror(
-                    "Error",
-                    "Bus not found."
-                )
-                return
-
-            if int(bus["available_seats"]) <= 0:
-                messagebox.showerror(
-                    "Full",
-                    "No seats available."
-                )
-                return
-
-            route_data = self.db.fetchone(
-                "SELECT * FROM routes WHERE route_number=?",
-                (route,)
-            )
-
-            if not route_data:
-                messagebox.showerror(
-                    "Error",
-                    "Route not found."
-                )
-                return
-
-            fare = float(route_data["fare"])
-
-            scheme = entries["Scheme"].get()
-
-            if scheme == "WOMAN-ZERO":
-                fare = 0
-            elif scheme in ("STUDENT", "SENIOR"):
-                fare *= 0.5
-
-            available = int(bus["available_seats"])
-            seat = entries["Seat Number"].get().strip()
-
-            if not seat:
-                occupied = self.db.fetchall("""
-                    SELECT seat_number
-                    FROM bookings
-                    WHERE bus_id=? AND travel_date=? AND status='CONFIRMED'
-                """, (
-                    bus_id,
-                    entries["Travel Date"].get().strip()
-                ))
-
-                occupied_set = {
-                    str(row["seat_number"])
-                    for row in occupied
-                }
-
-                for number in range(1, int(bus["capacity"]) + 1):
-                    if str(number) not in occupied_set:
-                        seat = str(number)
-                        break
-
-            pnr = (
-                "SB"
-                + datetime.now().strftime("%y%m%d")
-                + str(random.randint(1000, 9999))
-            )
-
-            try:
-                self.db.execute("""
-                    INSERT INTO bookings
-                    (pnr, passenger_name, phone, bus_id,
-                     route_number, source, destination,
-                     travel_date, seat_number, fare,
-                     scheme, status, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    pnr,
-                    passenger,
-                    entries["Phone"].get().strip(),
-                    bus_id,
-                    route,
-                    entries["Source"].get().strip(),
-                    entries["Destination"].get().strip(),
-                    entries["Travel Date"].get().strip(),
-                    seat,
-                    fare,
-                    scheme,
-                    "CONFIRMED",
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                ))
-
-                self.db.execute("""
-                    UPDATE buses
-                    SET available_seats=available_seats-1
-                    WHERE bus_id=?
-                """, (bus_id,))
-
-                self.db.execute("""
-                    INSERT INTO passengers
-                    (name, phone, age, gender)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    passenger,
-                    entries["Phone"].get().strip(),
-                    0,
-                    "Not Specified"
-                ))
-
-                messagebox.showinfo(
-                    "Booking Successful",
-                    f"Ticket booked successfully!\n\n"
-                    f"PNR: {pnr}\n"
-                    f"Seat: {seat}\n"
-                    f"Fare: ₹{fare:.2f}\n"
-                    f"Scheme: {scheme}"
-                )
-
-            except sqlite3.IntegrityError:
-                messagebox.showerror(
-                    "Booking Error",
-                    "Could not create booking. Please try again."
-                )
-
-        fare_label = tk.Label(
-            container,
-            text="Estimated Fare: ₹0.00",
-            bg="white",
-            fg="#198754",
-            font=("Segoe UI", 18, "bold")
-        )
-
-        fare_label.grid(
-            row=7,
-            column=0,
-            columnspan=3,
-            pady=20
-        )
-
-        tk.Button(
-            container,
-            text="💰 Calculate Fare",
-            command=calculate_fare,
-            bg="#1d4e89",
-            fg="white",
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
-            padx=20,
-            pady=10
-        ).grid(
-            row=8,
-            column=0,
-            padx=20,
-            pady=10
-        )
-
-        tk.Button(
-            container,
-            text="🎫 BOOK TICKET",
-            command=book_ticket,
-            bg="#198754",
-            fg="white",
-            relief="flat",
-            font=("Segoe UI", 11, "bold"),
-            padx=30,
-            pady=12
-        ).grid(
-            row=8,
-            column=1,
-            padx=20,
-            pady=10
-        )
-
-    # ========================================================
-    # PNR SEARCH
-    # ========================================================
-
-    def show_pnr(self):
-        self.clear_main()
-
-        self.page_title(
-            "PNR Search & Ticket Cancellation",
-            "Search your booking using the PNR number"
-        )
-
-        search_frame = tk.Frame(
-            self.main,
-            bg="white",
-            padx=25,
-            pady=25
-        )
-        search_frame.pack(fill="x", padx=25)
-
-        tk.Label(
-            search_frame,
-            text="PNR Number:",
-            bg="white",
-            font=("Segoe UI", 11, "bold")
-        ).pack(side="left")
-
-        pnr_entry = tk.Entry(
-            search_frame,
-            width=35,
-            font=("Segoe UI", 11)
-        )
-        pnr_entry.pack(side="left", padx=15)
-
-        result = tk.Text(
-            self.main,
-            height=18,
-            font=("Consolas", 11),
-            bg="white",
-            relief="flat",
-            padx=20,
-            pady=20
-        )
-        result.pack(
-            fill="both",
-            expand=True,
-            padx=25,
-            pady=20
-        )
-
-        def search():
-            result.delete("1.0", "end")
-
-            pnr = pnr_entry.get().strip()
-
-            row = self.db.fetchone(
-                "SELECT * FROM bookings WHERE pnr=?",
-                (pnr,)
-            )
-
-            if not row:
-                result.insert(
-                    "end",
-                    "No booking found for this PNR."
-                )
-                return
-
-            text = f"""
-SMART BUS
-========================================
-PNR             : {row['pnr']}
-Passenger       : {row['passenger_name']}
-Phone           : {row['phone']}
-Bus ID          : {row['bus_id']}
-Route           : {row['route_number']}
-Source          : {row['source']}
-Destination     : {row['destination']}
-Travel Date     : {row['travel_date']}
-Seat Number     : {row['seat_number']}
-Fare            : ₹{row['fare']:.2f}
-Scheme          : {row['scheme']}
-Status          : {row['status']}
-Booked At       : {row['created_at']}
-========================================
+"""
+SMART BUS - MASTER DATABASE
+Python 3.13
+SQLite database - standard library only
+
+Hierarchy:
+
+District
+    └── Town / Village
+            └── Bus Stand
+                    └── Stop
+                            └── Route
+                                    └── Route Stop
+                                            └── Service
+                                                    └── Fare
+
+Additional:
+Scheme
+Passenger
+Ticket
+Ticket Passenger
+Bus
+Driver
+
+Run:
+    python master_database.py
+
+Database created:
+    smart_bus.db
 """
 
-            result.insert("end", text)
+from __future__ import annotations
 
-        def cancel():
-            pnr = pnr_entry.get().strip()
-
-            row = self.db.fetchone(
-                "SELECT * FROM bookings WHERE pnr=?",
-                (pnr,)
-            )
-
-            if not row:
-                messagebox.showerror(
-                    "Error",
-                    "PNR not found."
-                )
-                return
-
-            if row["status"] == "CANCELLED":
-                messagebox.showinfo(
-                    "Already Cancelled",
-                    "This ticket is already cancelled."
-                )
-                return
-
-            if not messagebox.askyesno(
-                "Cancel Ticket",
-                f"Cancel ticket {pnr}?"
-            ):
-                return
-
-            self.db.execute("""
-                UPDATE bookings
-                SET status='CANCELLED'
-                WHERE pnr=?
-            """, (pnr,))
-
-            self.db.execute("""
-                UPDATE buses
-                SET available_seats=available_seats+1
-                WHERE bus_id=?
-            """, (row["bus_id"],))
-
-            messagebox.showinfo(
-                "Cancelled",
-                "Ticket cancelled successfully."
-            )
-
-            search()
-
-        tk.Button(
-            search_frame,
-            text="🔎 Search",
-            command=search,
-            bg="#1d4e89",
-            fg="white",
-            relief="flat",
-            padx=20
-        ).pack(side="left")
-
-        tk.Button(
-            search_frame,
-            text="❌ Cancel Ticket",
-            command=cancel,
-            bg="#c62828",
-            fg="white",
-            relief="flat",
-            padx=20
-        ).pack(side="left", padx=10)
-
-    # ========================================================
-    # REPORTS
-    # ========================================================
-
-    def show_reports(self):
-        self.clear_main()
-
-        self.page_title(
-            "Reports & Passenger Load Analysis",
-            "View current Smart Bus statistics"
-        )
-
-        frame = tk.Frame(self.main, bg="white")
-        frame.pack(fill="both", expand=True, padx=25, pady=10)
-
-        buses = self.db.fetchall(
-            "SELECT * FROM buses ORDER BY bus_id"
-        )
-
-        columns = (
-            "Bus",
-            "Route",
-            "Capacity",
-            "Available",
-            "Passengers",
-            "Load %",
-            "Status"
-        )
-
-        tree = ttk.Treeview(
-            frame,
-            columns=columns,
-            show="headings"
-        )
-
-        for col in columns:
-            tree.heading(col, text=col)
-            tree.column(col, width=150)
-
-        tree.pack(fill="both", expand=True)
-
-        for bus in buses:
-            capacity = int(bus["capacity"])
-            available = int(bus["available_seats"])
-            passengers = capacity - available
-
-            load = (
-                passengers / capacity * 100
-                if capacity else 0
-            )
-
-            tree.insert(
-                "",
-                "end",
-                values=(
-                    bus["bus_id"],
-                    bus["route_number"],
-                    capacity,
-                    available,
-                    passengers,
-                    f"{load:.1f}%",
-                    bus["status"]
-                )
-            )
-
-        total = self.db.fetchone(
-            "SELECT COUNT(*) AS c FROM bookings WHERE status='CONFIRMED'"
-        )["c"]
-
-        revenue = self.db.fetchone(
-            "SELECT COALESCE(SUM(fare),0) AS total "
-            "FROM bookings WHERE status='CONFIRMED'"
-        )["total"]
-
-        bottom = tk.Frame(
-            self.main,
-            bg="#eef3f8"
-        )
-        bottom.pack(fill="x", padx=25, pady=15)
-
-        tk.Label(
-            bottom,
-            text=f"Confirmed Bookings: {total}",
-            font=("Segoe UI", 12, "bold"),
-            bg="#eef3f8",
-            fg="#12355b"
-        ).pack(side="left", padx=20)
-
-        tk.Label(
-            bottom,
-            text=f"Total Revenue: ₹{revenue:.2f}",
-            font=("Segoe UI", 12, "bold"),
-            bg="#eef3f8",
-            fg="#198754"
-        ).pack(side="left", padx=20)
-
-    # ========================================================
-    # ADMIN
-    # ========================================================
-
-    def show_admin(self):
-        self.clear_main()
-
-        self.page_title(
-            "Admin Dashboard",
-            "Official transport websites and useful government services"
-        )
-
-        frame = tk.Frame(self.main, bg="white")
-        frame.pack(fill="both", expand=True, padx=25, pady=10)
-
-        columns = ("Name", "Category", "URL")
-
-        tree = ttk.Treeview(
-            frame,
-            columns=columns,
-            show="headings"
-        )
-
-        for col in columns:
-            tree.heading(col, text=col)
-            tree.column(col, width=250)
-
-        tree.pack(
-            side="left",
-            fill="both",
-            expand=True
-        )
-
-        links = self.db.fetchall("""
-            SELECT name, category, url
-            FROM official_links
-            ORDER BY category, name
-        """)
-
-        for row in links:
-            tree.insert(
-                "",
-                "end",
-                values=(
-                    row["name"],
-                    row["category"],
-                    row["url"]
-                )
-            )
-
-        scrollbar = ttk.Scrollbar(
-            frame,
-            orient="vertical",
-            command=tree.yview
-        )
-
-        tree.configure(
-            yscrollcommand=scrollbar.set
-        )
-
-        scrollbar.pack(side="right", fill="y")
-
-        def open_link():
-            selected = tree.selection()
-
-            if not selected:
-                messagebox.showwarning(
-                    "Select",
-                    "Please select a website."
-                )
-                return
-
-            values = tree.item(
-                selected[0],
-                "values"
-            )
-
-            webbrowser.open(values[2])
-
-        tk.Button(
-            self.main,
-            text="🌐 Open Selected Official Website",
-            command=open_link,
-            bg="#1d4e89",
-            fg="white",
-            relief="flat",
-            font=("Segoe UI", 10, "bold"),
-            padx=20,
-            pady=10
-        ).pack(pady=10)
-
-    # ========================================================
-    # EMERGENCY
-    # ========================================================
-
-    def show_emergency(self):
-        window = tk.Toplevel(self)
-        window.title("Emergency & Important Helplines")
-        window.geometry("600x600")
-        window.configure(bg="white")
-        window.transient(self)
-
-        tk.Label(
-            window,
-            text="🚨 Emergency & Helplines",
-            font=("Segoe UI", 20, "bold"),
-            bg="white",
-            fg="#c62828"
-        ).pack(pady=20)
-
-        contacts = [
-            ("Police", "100 / 112"),
-            ("Ambulance", "108"),
-            ("Fire & Rescue", "101"),
-            ("Women Helpline", "181"),
-            ("Child Helpline", "1098"),
-            ("Railway Helpline", "139"),
-            ("MTC Customer Care", "149"),
-            ("MTC Customer Care Mobile", "9445030516"),
-            ("Tamil Nadu Transport Authority", "044-28528030")
-        ]
-
-        for name, number in contacts:
-            row = tk.Frame(
-                window,
-                bg="white"
-            )
-            row.pack(fill="x", padx=40, pady=6)
-
-            tk.Label(
-                row,
-                text=name,
-                width=30,
-                anchor="w",
-                bg="white",
-                font=("Segoe UI", 11, "bold")
-            ).pack(side="left")
-
-            tk.Label(
-                row,
-                text=number,
-                bg="white",
-                fg="#c62828",
-                font=("Segoe UI", 11, "bold")
-            ).pack(side="left")
-
-        tk.Button(
-            window,
-            text="Close",
-            command=window.destroy,
-            bg="#12355b",
-            fg="white",
-            relief="flat",
-            padx=30,
-            pady=8
-        ).pack(pady=25)
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 
 # ============================================================
-# START APPLICATION
+# CONFIGURATION
 # ============================================================
+
+DB_FILE = Path("smart_bus.db")
+
+
+# ============================================================
+# DATABASE CONNECTION
+# ============================================================
+
+def get_connection() -> sqlite3.Connection:
+    connection = sqlite3.connect(DB_FILE)
+
+    connection.row_factory = sqlite3.Row
+
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+
+    return connection
+
+
+# ============================================================
+# DATABASE SCHEMA
+# ============================================================
+
+SCHEMA = """
+
+PRAGMA foreign_keys = ON;
+
+
+-- ==========================================================
+-- 1. DISTRICTS
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS districts (
+    district_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    district_code TEXT NOT NULL UNIQUE,
+    district_name TEXT NOT NULL UNIQUE,
+    state_name TEXT NOT NULL DEFAULT 'Tamil Nadu',
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+
+-- ==========================================================
+-- 2. LOCALITIES
+-- Town / City / Municipality / Corporation / Village
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS localities (
+    locality_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    district_id INTEGER NOT NULL,
+
+    locality_code TEXT NOT NULL UNIQUE,
+    locality_name TEXT NOT NULL,
+
+    locality_type TEXT NOT NULL CHECK (
+        locality_type IN (
+            'CITY',
+            'TOWN',
+            'TOWN_PANCHAYAT',
+            'MUNICIPALITY',
+            'MUNICIPAL_CORPORATION',
+            'VILLAGE',
+            'HAMLET',
+            'OTHER'
+        )
+    ),
+
+    pincode TEXT,
+
+    latitude REAL,
+    longitude REAL,
+
+    active INTEGER NOT NULL DEFAULT 1,
+
+    FOREIGN KEY (district_id)
+        REFERENCES districts(district_id)
+        ON DELETE RESTRICT,
+
+    UNIQUE (district_id, locality_name)
+);
+
+
+-- ==========================================================
+-- 3. BUS STANDS
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS bus_stands (
+    bus_stand_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    locality_id INTEGER NOT NULL,
+
+    bus_stand_code TEXT NOT NULL UNIQUE,
+    bus_stand_name TEXT NOT NULL,
+
+    bus_stand_type TEXT NOT NULL CHECK (
+        bus_stand_type IN (
+            'CENTRAL',
+            'MOFUSSIL',
+            'TOWN',
+            'INTERSTATE',
+            'DEPOT',
+            'TERMINAL',
+            'VILLAGE',
+            'OTHER'
+        )
+    ),
+
+    address TEXT,
+
+    latitude REAL,
+    longitude REAL,
+
+    bus_bays INTEGER DEFAULT 0,
+
+    active INTEGER NOT NULL DEFAULT 1,
+
+    FOREIGN KEY (locality_id)
+        REFERENCES localities(locality_id)
+        ON DELETE RESTRICT
+);
+
+
+-- ==========================================================
+-- 4. STOPS
+-- Every physical pickup/drop point
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS stops (
+    stop_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    bus_stand_id INTEGER,
+
+    locality_id INTEGER NOT NULL,
+
+    stop_code TEXT NOT NULL UNIQUE,
+    stop_name TEXT NOT NULL,
+
+    stop_type TEXT NOT NULL CHECK (
+        stop_type IN (
+            'BUS_STAND',
+            'BUS_STOP',
+            'JUNCTION',
+            'VILLAGE_STOP',
+            'HIGHWAY_STOP',
+            'DEPOT',
+            'OTHER'
+        )
+    ),
+
+    landmark TEXT,
+
+    latitude REAL,
+    longitude REAL,
+
+    active INTEGER NOT NULL DEFAULT 1,
+
+    FOREIGN KEY (bus_stand_id)
+        REFERENCES bus_stands(bus_stand_id)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (locality_id)
+        REFERENCES localities(locality_id)
+        ON DELETE RESTRICT
+);
+
+
+-- ==========================================================
+-- 5. OPERATORS
+-- MTC / TNSTC / SETC / PRIVATE / INTERSTATE
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS operators (
+    operator_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    operator_code TEXT NOT NULL UNIQUE,
+    operator_name TEXT NOT NULL,
+
+    operator_type TEXT NOT NULL CHECK (
+        operator_type IN (
+            'MTC',
+            'TNSTC',
+            'SETC',
+            'PRIVATE',
+            'KSRTC',
+            'APSRTC',
+            'TSRTC',
+            'OTHER'
+        )
+    ),
+
+    state_name TEXT,
+
+    booking_enabled INTEGER NOT NULL DEFAULT 0,
+
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+
+-- ==========================================================
+-- 6. BUSES
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS buses (
+    bus_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    bus_code TEXT NOT NULL UNIQUE,
+    registration_number TEXT UNIQUE,
+
+    operator_id INTEGER,
+
+    route_number TEXT,
+
+    bus_type TEXT NOT NULL DEFAULT 'ORDINARY',
+
+    capacity INTEGER NOT NULL CHECK (capacity > 0),
+
+    available_seats INTEGER NOT NULL DEFAULT 0,
+
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (
+        status IN (
+            'ACTIVE',
+            'RUNNING',
+            'MAINTENANCE',
+            'INACTIVE',
+            'CANCELLED'
+        )
+    ),
+
+    wheelchair_accessible INTEGER NOT NULL DEFAULT 0,
+
+    air_conditioned INTEGER NOT NULL DEFAULT 0,
+
+    sleeper INTEGER NOT NULL DEFAULT 0,
+
+    seater INTEGER NOT NULL DEFAULT 1,
+
+    FOREIGN KEY (operator_id)
+        REFERENCES operators(operator_id)
+        ON DELETE SET NULL
+);
+
+
+-- ==========================================================
+-- 7. DRIVERS
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS drivers (
+    driver_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    driver_code TEXT NOT NULL UNIQUE,
+
+    driver_name TEXT NOT NULL,
+
+    phone TEXT,
+
+    license_number TEXT UNIQUE,
+
+    license_expiry TEXT,
+
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+
+-- ==========================================================
+-- 8. ROUTES
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS routes (
+    route_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    route_code TEXT NOT NULL UNIQUE,
+
+    route_number TEXT,
+
+    route_name TEXT NOT NULL,
+
+    operator_id INTEGER,
+
+    source_stop_id INTEGER NOT NULL,
+
+    destination_stop_id INTEGER NOT NULL,
+
+    total_distance_km REAL,
+
+    estimated_duration_minutes INTEGER,
+
+    route_type TEXT NOT NULL DEFAULT 'INTERCITY' CHECK (
+        route_type IN (
+            'CITY',
+            'SUBURBAN',
+            'INTERCITY',
+            'INTERSTATE',
+            'RURAL',
+            'EXPRESS'
+        )
+    ),
+
+    active INTEGER NOT NULL DEFAULT 1,
+
+    FOREIGN KEY (operator_id)
+        REFERENCES operators(operator_id)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (source_stop_id)
+        REFERENCES stops(stop_id)
+        ON DELETE RESTRICT,
+
+    FOREIGN KEY (destination_stop_id)
+        REFERENCES stops(stop_id)
+        ON DELETE RESTRICT
+);
+
+
+-- ==========================================================
+-- 9. ROUTE STOPS
+-- Ordered stops belonging to a route
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS route_stops (
+    route_stop_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    route_id INTEGER NOT NULL,
+    stop_id INTEGER NOT NULL,
+
+    stop_sequence INTEGER NOT NULL,
+
+    distance_from_origin_km REAL DEFAULT 0,
+
+    arrival_offset_minutes INTEGER DEFAULT 0,
+    departure_offset_minutes INTEGER DEFAULT 0,
+
+    boarding_allowed INTEGER NOT NULL DEFAULT 1,
+    dropping_allowed INTEGER NOT NULL DEFAULT 1,
+
+    FOREIGN KEY (route_id)
+        REFERENCES routes(route_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (stop_id)
+        REFERENCES stops(stop_id)
+        ON DELETE RESTRICT,
+
+    UNIQUE (route_id, stop_sequence),
+    UNIQUE (route_id, stop_id)
+);
+
+
+-- ==========================================================
+-- 10. SERVICES / TRIPS
+-- A particular bus journey on a route
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS services (
+    service_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    service_code TEXT NOT NULL UNIQUE,
+
+    route_id INTEGER NOT NULL,
+
+    bus_id INTEGER,
+
+    driver_id INTEGER,
+
+    service_name TEXT,
+
+    service_class TEXT NOT NULL DEFAULT 'ORDINARY',
+
+    departure_time TEXT NOT NULL,
+    arrival_time TEXT,
+
+    journey_date TEXT,
+
+    operating_days TEXT,
+
+    live_status TEXT NOT NULL DEFAULT 'SCHEDULED' CHECK (
+        live_status IN (
+            'SCHEDULED',
+            'BOARDING',
+            'RUNNING',
+            'COMPLETED',
+            'CANCELLED',
+            'DELAYED'
+        )
+    ),
+
+    total_seats INTEGER DEFAULT 0,
+    available_seats INTEGER DEFAULT 0,
+
+    FOREIGN KEY (route_id)
+        REFERENCES routes(route_id)
+        ON DELETE RESTRICT,
+
+    FOREIGN KEY (bus_id)
+        REFERENCES buses(bus_id)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (driver_id)
+        REFERENCES drivers(driver_id)
+        ON DELETE SET NULL
+);
+
+
+-- ==========================================================
+-- 11. FARE RULES
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS fares (
+    fare_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    operator_id INTEGER,
+
+    route_id INTEGER,
+
+    service_class TEXT NOT NULL,
+
+    fare_type TEXT NOT NULL CHECK (
+        fare_type IN (
+            'STAGE',
+            'PER_KM',
+            'FIXED',
+            'FLEXI',
+            'SPECIAL'
+        )
+    ),
+
+    minimum_distance_km REAL DEFAULT 0,
+    maximum_distance_km REAL,
+
+    rate_per_km REAL,
+    base_fare REAL DEFAULT 0,
+
+    fixed_fare REAL,
+
+    minimum_fare REAL DEFAULT 0,
+    maximum_fare REAL,
+
+    peak_multiplier REAL DEFAULT 1.0,
+
+    effective_from TEXT NOT NULL,
+    effective_to TEXT,
+
+    source_reference TEXT,
+
+    active INTEGER NOT NULL DEFAULT 1,
+
+    FOREIGN KEY (operator_id)
+        REFERENCES operators(operator_id)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (route_id)
+        REFERENCES routes(route_id)
+        ON DELETE SET NULL
+);
+
+
+-- ==========================================================
+-- 12. FARE STAGES
+-- For stage-based city/town fares
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS fare_stages (
+    fare_stage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    operator_id INTEGER,
+
+    service_class TEXT NOT NULL,
+
+    stage_number INTEGER NOT NULL,
+
+    distance_km REAL NOT NULL,
+
+    fare_amount REAL NOT NULL,
+
+    effective_from TEXT NOT NULL,
+
+    effective_to TEXT,
+
+    source_reference TEXT,
+
+    FOREIGN KEY (operator_id)
+        REFERENCES operators(operator_id)
+        ON DELETE SET NULL,
+
+    UNIQUE (
+        operator_id,
+        service_class,
+        stage_number,
+        effective_from
+    )
+);
+
+
+-- ==========================================================
+-- 13. SCHEMES
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS schemes (
+    scheme_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    scheme_code TEXT NOT NULL UNIQUE,
+
+    scheme_name TEXT NOT NULL,
+
+    scheme_type TEXT NOT NULL CHECK (
+        scheme_type IN (
+            'FREE_TRAVEL',
+            'PERCENT_DISCOUNT',
+            'FIXED_DISCOUNT',
+            'PASS',
+            'CONCESSION',
+            'SPECIAL'
+        )
+    ),
+
+    passenger_category TEXT NOT NULL,
+
+    discount_percent REAL DEFAULT 0,
+
+    fixed_discount REAL DEFAULT 0,
+
+    zero_fare INTEGER NOT NULL DEFAULT 0,
+
+    eligibility_description TEXT,
+
+    required_document TEXT,
+
+    eligible_service_types TEXT,
+
+    applicable_operator_types TEXT,
+
+    minimum_age INTEGER,
+
+    maximum_age INTEGER,
+
+    effective_from TEXT,
+
+    effective_to TEXT,
+
+    source_reference TEXT,
+
+    active INTEGER NOT NULL DEFAULT 1
+);
+
+
+-- ==========================================================
+-- 14. SCHEME RULES
+-- More detailed route/service/operator rules
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS scheme_rules (
+    scheme_rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    scheme_id INTEGER NOT NULL,
+
+    operator_id INTEGER,
+
+    route_id INTEGER,
+
+    service_class TEXT,
+
+    origin_locality_id INTEGER,
+
+    destination_locality_id INTEGER,
+
+    max_distance_km REAL,
+
+    allowed_days TEXT,
+
+    start_time TEXT,
+
+    end_time TEXT,
+
+    FOREIGN KEY (scheme_id)
+        REFERENCES schemes(scheme_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (operator_id)
+        REFERENCES operators(operator_id)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (route_id)
+        REFERENCES routes(route_id)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (origin_locality_id)
+        REFERENCES localities(locality_id)
+        ON DELETE SET NULL,
+
+    FOREIGN KEY (destination_locality_id)
+        REFERENCES localities(locality_id)
+        ON DELETE SET NULL
+);
+
+
+-- ==========================================================
+-- 15. PASSENGERS
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS passengers (
+    passenger_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    passenger_code TEXT NOT NULL UNIQUE,
+
+    full_name TEXT NOT NULL,
+
+    age INTEGER,
+
+    gender TEXT,
+
+    phone TEXT,
+
+    email TEXT,
+
+    passenger_category TEXT NOT NULL DEFAULT 'GENERAL',
+
+    identity_type TEXT,
+
+    identity_number TEXT,
+
+    scheme_id INTEGER,
+
+    created_at TEXT NOT NULL,
+
+    FOREIGN KEY (scheme_id)
+        REFERENCES schemes(scheme_id)
+        ON DELETE SET NULL
+);
+
+
+-- ==========================================================
+-- 16. TICKETS
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS tickets (
+    ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    pnr TEXT NOT NULL UNIQUE,
+
+    service_id INTEGER NOT NULL,
+
+    boarding_stop_id INTEGER NOT NULL,
+
+    dropping_stop_id INTEGER NOT NULL,
+
+    booking_date TEXT NOT NULL,
+
+    travel_date TEXT NOT NULL,
+
+    passenger_count INTEGER NOT NULL DEFAULT 1,
+
+    base_fare REAL NOT NULL DEFAULT 0,
+
+    discount_amount REAL NOT NULL DEFAULT 0,
+
+    final_fare REAL NOT NULL DEFAULT 0,
+
+    payment_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
+        payment_status IN (
+            'PENDING',
+            'PAID',
+            'FAILED',
+            'REFUNDED'
+        )
+    ),
+
+    ticket_status TEXT NOT NULL DEFAULT 'CONFIRMED' CHECK (
+        ticket_status IN (
+            'CONFIRMED',
+            'CANCELLED',
+            'COMPLETED',
+            'NO_SHOW'
+        )
+    ),
+
+    created_at TEXT NOT NULL,
+
+    FOREIGN KEY (service_id)
+        REFERENCES services(service_id)
+        ON DELETE RESTRICT,
+
+    FOREIGN KEY (boarding_stop_id)
+        REFERENCES stops(stop_id)
+        ON DELETE RESTRICT,
+
+    FOREIGN KEY (dropping_stop_id)
+        REFERENCES stops(stop_id)
+        ON DELETE RESTRICT
+);
+
+
+-- ==========================================================
+-- 17. TICKET PASSENGERS
+-- ==========================================================
+
+CREATE TABLE IF NOT EXISTS ticket_passengers (
+    ticket_passenger_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    ticket_id INTEGER NOT NULL,
+
+    passenger_id INTEGER NOT NULL,
+
+    seat_number TEXT,
+
+    passenger_fare REAL DEFAULT 0,
+
+    scheme_discount REAL DEFAULT 0,
+
+    FOREIGN KEY (ticket_id)
+        REFERENCES tickets(ticket_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (passenger_id)
+        REFERENCES passengers(passenger_id)
+        ON DELETE RESTRICT
+);
+
+
+-- ==========================================================
+-- 18. INDEXES
+-- ==========================================================
+
+CREATE INDEX IF NOT EXISTS idx_localities_district
+ON localities(district_id);
+
+CREATE INDEX IF NOT EXISTS idx_bus_stands_locality
+ON bus_stands(locality_id);
+
+CREATE INDEX IF NOT EXISTS idx_stops_locality
+ON stops(locality_id);
+
+CREATE INDEX IF NOT EXISTS idx_routes_source
+ON routes(source_stop_id);
+
+CREATE INDEX IF NOT EXISTS idx_routes_destination
+ON routes(destination_stop_id);
+
+CREATE INDEX IF NOT EXISTS idx_route_stops_route
+ON route_stops(route_id);
+
+CREATE INDEX IF NOT EXISTS idx_services_route
+ON services(route_id);
+
+CREATE INDEX IF NOT EXISTS idx_services_date
+ON services(journey_date);
+
+CREATE INDEX IF NOT EXISTS idx_fares_route
+ON fares(route_id);
+
+CREATE INDEX IF NOT EXISTS idx_schemes_category
+ON schemes(passenger_category);
+
+CREATE INDEX IF NOT EXISTS idx_tickets_pnr
+ON tickets(pnr);
+
+CREATE INDEX IF NOT EXISTS idx_tickets_travel_date
+ON tickets(travel_date);
+
+
+-- ==========================================================
+-- 19. SEARCH VIEW
+-- ==========================================================
+
+CREATE VIEW IF NOT EXISTS route_search_view AS
+SELECT
+    r.route_id,
+    r.route_code,
+    r.route_number,
+    r.route_name,
+
+    src.stop_name AS source,
+    dst.stop_name AS destination,
+
+    r.total_distance_km,
+    r.estimated_duration_minutes,
+
+    o.operator_name,
+
+    r.route_type,
+    r.active
+
+FROM routes r
+
+LEFT JOIN stops src
+    ON src.stop_id = r.source_stop_id
+
+LEFT JOIN stops dst
+    ON dst.stop_id = r.destination_stop_id
+
+LEFT JOIN operators o
+    ON o.operator_id = r.operator_id;
+
+
+-- ==========================================================
+-- 20. SERVICE SEARCH VIEW
+-- ==========================================================
+
+CREATE VIEW IF NOT EXISTS service_search_view AS
+SELECT
+    s.service_id,
+    s.service_code,
+
+    r.route_code,
+    r.route_number,
+    r.route_name,
+
+    src.stop_name AS source,
+    dst.stop_name AS destination,
+
+    s.service_class,
+    s.departure_time,
+    s.arrival_time,
+
+    s.journey_date,
+
+    s.total_seats,
+    s.available_seats,
+
+    o.operator_name,
+
+    s.live_status
+
+FROM services s
+
+JOIN routes r
+    ON r.route_id = s.route_id
+
+JOIN stops src
+    ON src.stop_id = r.source_stop_id
+
+JOIN stops dst
+    ON dst.stop_id = r.destination_stop_id
+
+LEFT JOIN operators o
+    ON o.operator_id = (
+        SELECT operator_id
+        FROM buses
+        WHERE buses.bus_id = s.bus_id
+    );
+
+
+"""
+
+
+# ============================================================
+# DATABASE INITIALIZATION
+# ============================================================
+
+def initialize_database() -> None:
+
+    with get_connection() as connection:
+        connection.executescript(SCHEMA)
+
+    print(f"Database ready: {DB_FILE.resolve()}")
+
+
+# ============================================================
+# 38 TAMIL NADU DISTRICTS
+# ============================================================
+
+DISTRICTS = [
+    ("TN01", "Ariyalur"),
+    ("TN02", "Chengalpattu"),
+    ("TN03", "Chennai"),
+    ("TN04", "Coimbatore"),
+    ("TN05", "Cuddalore"),
+    ("TN06", "Dharmapuri"),
+    ("TN07", "Dindigul"),
+    ("TN08", "Erode"),
+    ("TN09", "Kallakurichi"),
+    ("TN10", "Kancheepuram"),
+    ("TN11", "Karur"),
+    ("TN12", "Krishnagiri"),
+    ("TN13", "Madurai"),
+    ("TN14", "Mayiladuthurai"),
+    ("TN15", "Nagapattinam"),
+    ("TN16", "Kanniyakumari"),
+    ("TN17", "Namakkal"),
+    ("TN18", "Perambalur"),
+    ("TN19", "Pudukkottai"),
+    ("TN20", "Ramanathapuram"),
+    ("TN21", "Ranipet"),
+    ("TN22", "Salem"),
+    ("TN23", "Sivaganga"),
+    ("TN24", "Tenkasi"),
+    ("TN25", "Thanjavur"),
+    ("TN26", "Theni"),
+    ("TN27", "Thoothukudi"),
+    ("TN28", "Tiruchirappalli"),
+    ("TN29", "Tirunelveli"),
+    ("TN30", "Tirupathur"),
+    ("TN31", "Tiruppur"),
+    ("TN32", "Tiruvallur"),
+    ("TN33", "Tiruvannamalai"),
+    ("TN34", "The Nilgiris"),
+    ("TN35", "Vellore"),
+    ("TN36", "Viluppuram"),
+    ("TN37", "Virudhunagar"),
+]
+
+
+# ============================================================
+# INSERT DISTRICTS
+# ============================================================
+
+def seed_districts() -> None:
+
+    with get_connection() as connection:
+
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO districts
+            (
+                district_code,
+                district_name
+            )
+            VALUES (?, ?)
+            """,
+            DISTRICTS
+        )
+
+    print(f"Loaded {len(DISTRICTS)} districts.")
+
+
+# ============================================================
+# OPERATORS
+# ============================================================
+
+OPERATORS = [
+    (
+        "MTC",
+        "Metropolitan Transport Corporation",
+        "MTC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "SETC",
+        "State Express Transport Corporation",
+        "SETC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "TNSTC-VPM",
+        "TNSTC Villupuram",
+        "TNSTC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "TNSTC-SLM",
+        "TNSTC Salem",
+        "TNSTC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "TNSTC-CBE",
+        "TNSTC Coimbatore",
+        "TNSTC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "TNSTC-MDU",
+        "TNSTC Madurai",
+        "TNSTC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "TNSTC-KUM",
+        "TNSTC Kumbakonam",
+        "TNSTC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "TNSTC-TNV",
+        "TNSTC Tirunelveli",
+        "TNSTC",
+        "Tamil Nadu",
+        1
+    ),
+    (
+        "PRIVATE",
+        "Private Bus Operator",
+        "PRIVATE",
+        "India",
+        0
+    ),
+]
+
+
+def seed_operators() -> None:
+
+    with get_connection() as connection:
+
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO operators
+            (
+                operator_code,
+                operator_name,
+                operator_type,
+                state_name,
+                booking_enabled
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            OPERATORS
+        )
+
+    print(f"Loaded {len(OPERATORS)} operators.")
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def get_id(
+    table: str,
+    id_column: str,
+    lookup_column: str,
+    value: str
+) -> Optional[int]:
+
+    allowed_tables = {
+        "districts",
+        "localities",
+        "bus_stands",
+        "stops",
+        "operators",
+        "routes",
+        "schemes",
+        "services"
+    }
+
+    if table not in allowed_tables:
+        raise ValueError("Invalid table name")
+
+    query = f"""
+        SELECT {id_column}
+        FROM {table}
+        WHERE {lookup_column} = ?
+        LIMIT 1
+    """
+
+    with get_connection() as connection:
+
+        row = connection.execute(
+            query,
+            (value,)
+        ).fetchone()
+
+    return row[0] if row else None
+
+
+# ============================================================
+# ADD LOCALITY
+# ============================================================
+
+def add_locality(
+    district_name: str,
+    locality_code: str,
+    locality_name: str,
+    locality_type: str,
+    pincode: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None
+) -> int:
+
+    with get_connection() as connection:
+
+        district = connection.execute(
+            """
+            SELECT district_id
+            FROM districts
+            WHERE district_name = ?
+            """,
+            (district_name,)
+        ).fetchone()
+
+        if district is None:
+            raise ValueError(
+                f"District not found: {district_name}"
+            )
+
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO localities
+            (
+                district_id,
+                locality_code,
+                locality_name,
+                locality_type,
+                pincode,
+                latitude,
+                longitude
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                district["district_id"],
+                locality_code,
+                locality_name,
+                locality_type,
+                pincode,
+                latitude,
+                longitude
+            )
+        )
+
+        if cursor.lastrowid:
+            return cursor.lastrowid
+
+        row = connection.execute(
+            """
+            SELECT locality_id
+            FROM localities
+            WHERE locality_code = ?
+            """,
+            (locality_code,)
+        ).fetchone()
+
+        return row["locality_id"]
+
+
+# ============================================================
+# ADD BUS STAND
+# ============================================================
+
+def add_bus_stand(
+    locality_code: str,
+    bus_stand_code: str,
+    bus_stand_name: str,
+    bus_stand_type: str,
+    address: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    bus_bays: int = 0
+) -> int:
+
+    with get_connection() as connection:
+
+        locality = connection.execute(
+            """
+            SELECT locality_id
+            FROM localities
+            WHERE locality_code = ?
+            """,
+            (locality_code,)
+        ).fetchone()
+
+        if locality is None:
+            raise ValueError(
+                f"Locality not found: {locality_code}"
+            )
+
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO bus_stands
+            (
+                locality_id,
+                bus_stand_code,
+                bus_stand_name,
+                bus_stand_type,
+                address,
+                latitude,
+                longitude,
+                bus_bays
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                locality["locality_id"],
+                bus_stand_code,
+                bus_stand_name,
+                bus_stand_type,
+                address,
+                latitude,
+                longitude,
+                bus_bays
+            )
+        )
+
+        if cursor.lastrowid:
+            return cursor.lastrowid
+
+        row = connection.execute(
+            """
+            SELECT bus_stand_id
+            FROM bus_stands
+            WHERE bus_stand_code = ?
+            """,
+            (bus_stand_code,)
+        ).fetchone()
+
+        return row["bus_stand_id"]
+
+
+# ============================================================
+# ADD STOP
+# ============================================================
+
+def add_stop(
+    locality_code: str,
+    stop_code: str,
+    stop_name: str,
+    stop_type: str,
+    bus_stand_code: Optional[str] = None,
+    landmark: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None
+) -> int:
+
+    with get_connection() as connection:
+
+        locality = connection.execute(
+            """
+            SELECT locality_id
+            FROM localities
+            WHERE locality_code = ?
+            """,
+            (locality_code,)
+        ).fetchone()
+
+        if locality is None:
+            raise ValueError(
+                f"Locality not found: {locality_code}"
+            )
+
+        bus_stand_id = None
+
+        if bus_stand_code:
+
+            bus_stand = connection.execute(
+                """
+                SELECT bus_stand_id
+                FROM bus_stands
+                WHERE bus_stand_code = ?
+                """,
+                (bus_stand_code,)
+            ).fetchone()
+
+            if bus_stand:
+                bus_stand_id = bus_stand["bus_stand_id"]
+
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO stops
+            (
+                bus_stand_id,
+                locality_id,
+                stop_code,
+                stop_name,
+                stop_type,
+                landmark,
+                latitude,
+                longitude
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                bus_stand_id,
+                locality["locality_id"],
+                stop_code,
+                stop_name,
+                stop_type,
+                landmark,
+                latitude,
+                longitude
+            )
+        )
+
+        if cursor.lastrowid:
+            return cursor.lastrowid
+
+        row = connection.execute(
+            """
+            SELECT stop_id
+            FROM stops
+            WHERE stop_code = ?
+            """,
+            (stop_code,)
+        ).fetchone()
+
+        return row["stop_id"]
+
+
+# ============================================================
+# ADD ROUTE
+# ============================================================
+
+def add_route(
+    route_code: str,
+    route_number: str,
+    route_name: str,
+    source_stop_code: str,
+    destination_stop_code: str,
+    operator_code: Optional[str] = None,
+    distance_km: Optional[float] = None,
+    duration_minutes: Optional[int] = None,
+    route_type: str = "INTERCITY"
+) -> int:
+
+    with get_connection() as connection:
+
+        source = connection.execute(
+            """
+            SELECT stop_id
+            FROM stops
+            WHERE stop_code = ?
+            """,
+            (source_stop_code,)
+        ).fetchone()
+
+        destination = connection.execute(
+            """
+            SELECT stop_id
+            FROM stops
+            WHERE stop_code = ?
+            """,
+            (destination_stop_code,)
+        ).fetchone()
+
+        if source is None:
+            raise ValueError(
+                f"Source stop not found: {source_stop_code}"
+            )
+
+        if destination is None:
+            raise ValueError(
+                f"Destination stop not found: {destination_stop_code}"
+            )
+
+        operator_id = None
+
+        if operator_code:
+
+            operator = connection.execute(
+                """
+                SELECT operator_id
+                FROM operators
+                WHERE operator_code = ?
+                """,
+                (operator_code,)
+            ).fetchone()
+
+            if operator:
+                operator_id = operator["operator_id"]
+
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO routes
+            (
+                route_code,
+                route_number,
+                route_name,
+                operator_id,
+                source_stop_id,
+                destination_stop_id,
+                total_distance_km,
+                estimated_duration_minutes,
+                route_type
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                route_code,
+                route_number,
+                route_name,
+                operator_id,
+                source["stop_id"],
+                destination["stop_id"],
+                distance_km,
+                duration_minutes,
+                route_type
+            )
+        )
+
+        if cursor.lastrowid:
+            return cursor.lastrowid
+
+        row = connection.execute(
+            """
+            SELECT route_id
+            FROM routes
+            WHERE route_code = ?
+            """,
+            (route_code,)
+        ).fetchone()
+
+        return row["route_id"]
+
+
+# ============================================================
+# ADD ROUTE STOP
+# ============================================================
+
+def add_route_stop(
+    route_code: str,
+    stop_code: str,
+    sequence: int,
+    distance_from_origin_km: float = 0,
+    arrival_offset_minutes: int = 0,
+    departure_offset_minutes: int = 0
+) -> None:
+
+    with get_connection() as connection:
+
+        route = connection.execute(
+            """
+            SELECT route_id
+            FROM routes
+            WHERE route_code = ?
+            """,
+            (route_code,)
+        ).fetchone()
+
+        stop = connection.execute(
+            """
+            SELECT stop_id
+            FROM stops
+            WHERE stop_code = ?
+            """,
+            (stop_code,)
+        ).fetchone()
+
+        if route is None:
+            raise ValueError(
+                f"Route not found: {route_code}"
+            )
+
+        if stop is None:
+            raise ValueError(
+                f"Stop not found: {stop_code}"
+            )
+
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO route_stops
+            (
+                route_id,
+                stop_id,
+                stop_sequence,
+                distance_from_origin_km,
+                arrival_offset_minutes,
+                departure_offset_minutes
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                route["route_id"],
+                stop["stop_id"],
+                sequence,
+                distance_from_origin_km,
+                arrival_offset_minutes,
+                departure_offset_minutes
+            )
+        )
+
+
+# ============================================================
+# ADD SCHEME
+# ============================================================
+
+def add_scheme(
+    scheme_code: str,
+    scheme_name: str,
+    scheme_type: str,
+    passenger_category: str,
+    discount_percent: float = 0,
+    fixed_discount: float = 0,
+    zero_fare: bool = False,
+    eligibility_description: Optional[str] = None,
+    required_document: Optional[str] = None,
+    effective_from: Optional[str] = None,
+    effective_to: Optional[str] = None,
+    source_reference: Optional[str] = None
+) -> int:
+
+    with get_connection() as connection:
+
+        cursor = connection.execute(
+            """
+            INSERT OR IGNORE INTO schemes
+            (
+                scheme_code,
+                scheme_name,
+                scheme_type,
+                passenger_category,
+                discount_percent,
+                fixed_discount,
+                zero_fare,
+                eligibility_description,
+                required_document,
+                effective_from,
+                effective_to,
+                source_reference
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scheme_code,
+                scheme_name,
+                scheme_type,
+                passenger_category,
+                discount_percent,
+                fixed_discount,
+                int(zero_fare),
+                eligibility_description,
+                required_document,
+                effective_from,
+                effective_to,
+                source_reference
+            )
+        )
+
+        if cursor.lastrowid:
+            return cursor.lastrowid
+
+        row = connection.execute(
+            """
+            SELECT scheme_id
+            FROM schemes
+            WHERE scheme_code = ?
+            """,
+            (scheme_code,)
+        ).fetchone()
+
+        return row["scheme_id"]
+
+
+# ============================================================
+# FARE CALCULATION
+# ============================================================
+
+def calculate_fare(
+    distance_km: float,
+    rate_per_km: float,
+    base_fare: float = 0,
+    minimum_fare: float = 0,
+    maximum_fare: Optional[float] = None,
+    multiplier: float = 1.0
+) -> float:
+
+    fare = base_fare + (
+        distance_km * rate_per_km
+    )
+
+    fare *= multiplier
+
+    fare = max(
+        fare,
+        minimum_fare
+    )
+
+    if maximum_fare is not None:
+        fare = min(
+            fare,
+            maximum_fare
+        )
+
+    return round(fare, 2)
+
+
+# ============================================================
+# APPLY SCHEME
+# ============================================================
+
+def apply_scheme(
+    base_fare: float,
+    scheme_code: Optional[str]
+) -> tuple[float, float]:
+
+    if not scheme_code:
+        return base_fare, 0.0
+
+    with get_connection() as connection:
+
+        scheme = connection.execute(
+            """
+            SELECT *
+            FROM schemes
+            WHERE scheme_code = ?
+              AND active = 1
+            """,
+            (scheme_code,)
+        ).fetchone()
+
+    if scheme is None:
+        return base_fare, 0.0
+
+    if scheme["zero_fare"]:
+        return 0.0, base_fare
+
+    discount = 0.0
+
+    if scheme["discount_percent"]:
+        discount += (
+            base_fare *
+            scheme["discount_percent"] /
+            100
+        )
+
+    if scheme["fixed_discount"]:
+        discount += scheme["fixed_discount"]
+
+    discount = min(
+        discount,
+        base_fare
+    )
+
+    final_fare = round(
+        base_fare - discount,
+        2
+    )
+
+    return final_fare, round(discount, 2)
+
+
+# ============================================================
+# SEARCH ROUTES
+# ============================================================
+
+def search_routes(
+    source: str,
+    destination: str
+) -> list[sqlite3.Row]:
+
+    with get_connection() as connection:
+
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM route_search_view
+            WHERE LOWER(source) LIKE LOWER(?)
+              AND LOWER(destination) LIKE LOWER(?)
+              AND active = 1
+            ORDER BY route_name
+            """,
+            (
+                f"%{source}%",
+                f"%{destination}%"
+            )
+        ).fetchall()
+
+    return rows
+
+
+# ============================================================
+# SEARCH SERVICES
+# ============================================================
+
+def search_services(
+    source: str,
+    destination: str,
+    travel_date: Optional[str] = None
+) -> list[sqlite3.Row]:
+
+    query = """
+        SELECT *
+        FROM service_search_view
+        WHERE LOWER(source) LIKE LOWER(?)
+          AND LOWER(destination) LIKE LOWER(?)
+          AND live_status != 'CANCELLED'
+    """
+
+    parameters = [
+        f"%{source}%",
+        f"%{destination}%"
+    ]
+
+    if travel_date:
+
+        query += """
+            AND (
+                journey_date = ?
+                OR journey_date IS NULL
+            )
+        """
+
+        parameters.append(travel_date)
+
+    query += """
+        ORDER BY departure_time
+    """
+
+    with get_connection() as connection:
+
+        return connection.execute(
+            query,
+            parameters
+        ).fetchall()
+
+
+# ============================================================
+# DISPLAY ROUTES
+# ============================================================
+
+def print_routes(rows: list[sqlite3.Row]) -> None:
+
+    if not rows:
+        print("No routes found.")
+        return
+
+    print()
+    print("=" * 100)
+    print(
+        f"{'CODE':<12}"
+        f"{'ROUTE':<25}"
+        f"{'FROM':<20}"
+        f"{'TO':<20}"
+        f"{'KM':<8}"
+    )
+    print("=" * 100)
+
+    for row in rows:
+
+        print(
+            f"{row['route_code']:<12}"
+            f"{row['route_name'][:24]:<25}"
+            f"{row['source'][:19]:<20}"
+            f"{row['destination'][:19]:<20}"
+            f"{str(row['total_distance_km'] or ''):<8}"
+        )
+
+    print("=" * 100)
+
+
+# ============================================================
+# SEED DEMO DATA
+# ============================================================
+
+def seed_demo_data() -> None:
+
+    # --------------------------------------------------------
+    # ERODE
+    # --------------------------------------------------------
+
+    add_locality(
+        "Erode",
+        "ERD-CITY",
+        "Erode",
+        "CITY",
+        "638001"
+    )
+
+    add_bus_stand(
+        "ERD-CITY",
+        "ERD-BS",
+        "Erode Bus Stand",
+        "CENTRAL",
+        "Erode",
+        bus_bays=20
+    )
+
+    add_stop(
+        "ERD-CITY",
+        "ERD-BS-STOP",
+        "Erode Bus Stand",
+        "BUS_STAND",
+        "ERD-BS"
+    )
+
+    # --------------------------------------------------------
+    # COIMBATORE
+    # --------------------------------------------------------
+
+    add_locality(
+        "Coimbatore",
+        "CBE-CITY",
+        "Coimbatore",
+        "CITY",
+        "641001"
+    )
+
+    add_bus_stand(
+        "CBE-CITY",
+        "CBE-GANDHIPURAM",
+        "Gandhipuram Bus Stand",
+        "CENTRAL",
+        "Gandhipuram, Coimbatore",
+        bus_bays=30
+    )
+
+    add_stop(
+        "CBE-CITY",
+        "CBE-GAN-STOP",
+        "Gandhipuram Bus Stand",
+        "BUS_STAND",
+        "CBE-GANDHIPURAM"
+    )
+
+    # --------------------------------------------------------
+    # ROUTE R12
+    # --------------------------------------------------------
+
+    add_route(
+        route_code="R12",
+        route_number="R12",
+        route_name="Erode - Coimbatore",
+        source_stop_code="ERD-BS-STOP",
+        destination_stop_code="CBE-GAN-STOP",
+        operator_code="TNSTC-CBE",
+        distance_km=100.0,
+        duration_minutes=180,
+        route_type="INTERCITY"
+    )
+
+    add_route_stop(
+        "R12",
+        "ERD-BS-STOP",
+        1,
+        0.0,
+        0,
+        0
+    )
+
+    add_route_stop(
+        "R12",
+        "CBE-GAN-STOP",
+        2,
+        100.0,
+        180,
+        180
+    )
+
+    # --------------------------------------------------------
+    # SPECIAL CHALLENGE BUS
+    # --------------------------------------------------------
+
+    with get_connection() as connection:
+
+        operator = connection.execute(
+            """
+            SELECT operator_id
+            FROM operators
+            WHERE operator_code = 'TNSTC-CBE'
+            """
+        ).fetchone()
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO buses
+            (
+                bus_code,
+                registration_number,
+                operator_id,
+                route_number,
+                bus_type,
+                capacity,
+                available_seats,
+                status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "BUS101",
+                "TN-XX-0000",
+                operator["operator_id"],
+                "R12",
+                "ORDINARY",
+                50,
+                8,
+                "RUNNING"
+            )
+        )
+
+    # --------------------------------------------------------
+    # DRIVER
+    # --------------------------------------------------------
+
+    with get_connection() as connection:
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO drivers
+            (
+                driver_code,
+                driver_name
+            )
+            VALUES (?, ?)
+            """,
+            (
+                "DRV101",
+                "Demo Driver"
+            )
+        )
+
+    # --------------------------------------------------------
+    # SERVICE
+    # --------------------------------------------------------
+
+    with get_connection() as connection:
+
+        route = connection.execute(
+            """
+            SELECT route_id
+            FROM routes
+            WHERE route_code = 'R12'
+            """
+        ).fetchone()
+
+        bus = connection.execute(
+            """
+            SELECT bus_id
+            FROM buses
+            WHERE bus_code = 'BUS101'
+            """
+        ).fetchone()
+
+        driver = connection.execute(
+            """
+            SELECT driver_id
+            FROM drivers
+            WHERE driver_code = 'DRV101'
+            """
+        ).fetchone()
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO services
+            (
+                service_code,
+                route_id,
+                bus_id,
+                driver_id,
+                service_name,
+                service_class,
+                departure_time,
+                arrival_time,
+                journey_date,
+                total_seats,
+                available_seats,
+                live_status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "SVC-R12-001",
+                route["route_id"],
+                bus["bus_id"],
+                driver["driver_id"],
+                "Erode - Coimbatore Express",
+                "EXPRESS",
+                "06:00",
+                "09:00",
+                None,
+                50,
+                8,
+                "SCHEDULED"
+            )
+        )
+
+    # --------------------------------------------------------
+    # SCHEMES
+    # --------------------------------------------------------
+
+    add_scheme(
+        scheme_code="WOMAN-ZERO",
+        scheme_name="Women Zero Fare Travel",
+        scheme_type="FREE_TRAVEL",
+        passenger_category="WOMAN",
+        zero_fare=True,
+        eligibility_description=(
+            "Eligible women passenger subject to applicable "
+            "government/operator rules."
+        ),
+        required_document="Aadhaar / PDS",
+        source_reference="TNSTC official Zero Fare Travel"
+    )
+
+    add_scheme(
+        scheme_code="GENERAL",
+        scheme_name="General Passenger",
+        scheme_type="CONCESSION",
+        passenger_category="GENERAL",
+        source_reference="Standard fare"
+    )
+
+    add_scheme(
+        scheme_code="STUDENT",
+        scheme_name="Student Concession",
+        scheme_type="CONCESSION",
+        passenger_category="STUDENT",
+        discount_percent=50,
+        eligibility_description=(
+            "Use only where applicable to the relevant "
+            "operator/service and valid student eligibility."
+        ),
+        required_document="Student ID / Pass",
+        source_reference="Operator/Government scheme"
+    )
+
+    add_scheme(
+        scheme_code="SENIOR",
+        scheme_name="Senior Citizen",
+        scheme_type="CONCESSION",
+        passenger_category="SENIOR_CITIZEN",
+        eligibility_description=(
+            "Eligibility must be checked against the "
+            "applicable operator/pass rules."
+        ),
+        required_document="Age Proof",
+        source_reference="Operator/Government scheme"
+    )
+
+    print("Demo master data loaded.")
+
+
+# ============================================================
+# DATABASE REPORT
+# ============================================================
+
+def database_report() -> None:
+
+    tables = [
+        "districts",
+        "localities",
+        "bus_stands",
+        "stops",
+        "operators",
+        "buses",
+        "drivers",
+        "routes",
+        "route_stops",
+        "services",
+        "fares",
+        "fare_stages",
+        "schemes",
+        "scheme_rules",
+        "passengers",
+        "tickets",
+        "ticket_passengers"
+    ]
+
+    print()
+    print("=" * 60)
+    print("SMART BUS DATABASE REPORT")
+    print("=" * 60)
+
+    with get_connection() as connection:
+
+        for table in tables:
+
+            row = connection.execute(
+                f"SELECT COUNT(*) AS total FROM {table}"
+            ).fetchone()
+
+            print(
+                f"{table:<25} {row['total']:>8}"
+            )
+
+    print("=" * 60)
+
+
+# ============================================================
+# SHOW ROUTE
+# ============================================================
+
+def show_route(route_code: str) -> None:
+
+    with get_connection() as connection:
+
+        route = connection.execute(
+            """
+            SELECT
+                r.route_code,
+                r.route_number,
+                r.route_name,
+                r.total_distance_km,
+                r.estimated_duration_minutes,
+                o.operator_name
+            FROM routes r
+            LEFT JOIN operators o
+                ON o.operator_id = r.operator_id
+            WHERE r.route_code = ?
+            """,
+            (route_code,)
+        ).fetchone()
+
+        if route is None:
+            print("Route not found.")
+            return
+
+        print()
+        print("=" * 70)
+        print(f"Route: {route['route_name']}")
+        print(f"Route Code: {route['route_code']}")
+        print(f"Route Number: {route['route_number']}")
+        print(f"Operator: {route['operator_name']}")
+        print(f"Distance: {route['total_distance_km']} km")
+        print(
+            f"Duration: "
+            f"{route['estimated_duration_minutes']} minutes"
+        )
+        print("=" * 70)
+
+        stops = connection.execute(
+            """
+            SELECT
+                rs.stop_sequence,
+                s.stop_code,
+                s.stop_name,
+                rs.distance_from_origin_km,
+                rs.arrival_offset_minutes
+            FROM route_stops rs
+            JOIN stops s
+                ON s.stop_id = rs.stop_id
+            JOIN routes r
+                ON r.route_id = rs.route_id
+            WHERE r.route_code = ?
+            ORDER BY rs.stop_sequence
+            """,
+            (route_code,)
+        ).fetchall()
+
+        for stop in stops:
+
+            print(
+                f"{stop['stop_sequence']:>3}. "
+                f"{stop['stop_name']:<35} "
+                f"{stop['distance_from_origin_km']:>7.1f} km"
+            )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main() -> None:
+
+    print()
+    print("=" * 70)
+    print("SMART BUS - MASTER DATABASE")
+    print("Python 3.13 + SQLite")
+    print("=" * 70)
+
+    initialize_database()
+
+    seed_districts()
+    seed_operators()
+    seed_demo_data()
+
+    database_report()
+
+    print()
+    print("Sample route:")
+    show_route("R12")
+
+    print()
+    print("Searching Erode -> Coimbatore:")
+    rows = search_routes(
+        "Erode",
+        "Coimbatore"
+    )
+
+    print_routes(rows)
+
+    print()
+    print("Database initialization completed.")
+    print(f"File: {DB_FILE.resolve()}")
+
 
 if __name__ == "__main__":
-    app = SmartBusApp()
-    app.mainloop()
+    main()
