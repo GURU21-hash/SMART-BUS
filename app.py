@@ -358,53 +358,30 @@ def google_maps_address(place):
     return GOOGLE_MAPS_STATION_ADDRESSES.get(place, f"{place}, Tamil Nadu, India")
 
 def google_maps_route_details(src, dst):
-    """Return the current Google Maps driving distance and duration for a pair."""
-    src = str(src or "").strip()
-    dst = str(dst or "").strip()
-    if not src or not dst:
-        return None
-    if src.casefold() == dst.casefold():
-        return {"distance_km": 0.0, "duration_min": 0, "source": "Google Maps Routes API"}
-    api_key = get_google_maps_api_key()
-    if not api_key:
-        return None
-    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": api_key,
-        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration"
-    }
-    payload = {
-        "origin": {"address": google_maps_address(src)},
-        "destination": {"address": google_maps_address(dst)},
-        "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_UNAWARE",
-        "languageCode": "en-IN",
-        "regionCode": "IN"
-    }
+    """Google Maps Routes API only. Returns real road distance and duration."""
+    src, dst = str(src or "").strip(), str(dst or "").strip()
+    if not src or not dst: return None
+    if src.casefold() == dst.casefold(): return {"distance_km":0.0,"duration_min":0,"source":"Google Maps Routes API"}
+    cache=st.session_state.setdefault("google_route_cache", {})
+    key=f"{src}|||{dst}"
+    if key in cache: return cache[key]
+    api_key=get_google_maps_api_key()
+    if not api_key: return None
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        routes = data.get("routes") or []
-        if not routes:
-            return None
-        route = routes[0]
-        meters = route.get("distanceMeters")
-        if meters is None:
-            return None
-        duration_min = None
-        duration_text = route.get("duration")
-        if isinstance(duration_text, str) and duration_text.endswith("s"):
-            try:
-                duration_min = int(round(float(duration_text[:-1]) / 60.0))
-            except Exception:
-                duration_min = None
-        return {
-            "distance_km": round(float(meters) / 1000.0, 1),
-            "duration_min": duration_min,
-            "source": "Google Maps Routes API"
-        }
+        response=requests.post(
+            "https://routes.googleapis.com/directions/v2:computeRoutes",
+            headers={"Content-Type":"application/json","X-Goog-Api-Key":api_key,"X-Goog-FieldMask":"routes.distanceMeters,routes.duration"},
+            json={"origin":{"address":google_maps_address(src)},"destination":{"address":google_maps_address(dst)},"travelMode":"DRIVE","routingPreference":"TRAFFIC_UNAWARE","computeAlternativeRoutes":False,"languageCode":"en-IN","regionCode":"IN","units":"METRIC"},
+            timeout=12
+        )
+        response.raise_for_status(); routes=response.json().get("routes") or []
+        if not routes or routes[0].get("distanceMeters") is None: return None
+        route=routes[0]; duration_min=None; ds=route.get("duration")
+        if isinstance(ds,str) and ds.endswith("s"):
+            try: duration_min=int(round(float(ds[:-1])/60.0))
+            except Exception: pass
+        result={"distance_km":round(float(route["distanceMeters"])/1000.0,1),"duration_min":duration_min,"source":"Google Maps Routes API"}
+        cache[key]=result; return result
     except Exception:
         return None
 
@@ -624,6 +601,7 @@ def get_complete_schedule(src, dst, route_details=None):
             processed.append({
                 "bus_no": item["rto"], "type": chosen_type, "dep": item["dep"],
                 "arr": format_minutes_to_time(arr_min), "dep_minutes": dep_min,
+                "duration_min": duration_min,
                 "duration_str": f"{duration_min // 60}h {duration_min % 60}m",
                 "fare": fare_info["total_fare"], "fare_breakdown": fare_info,
                 "seats": random.randint(8, 36),
@@ -1144,6 +1122,16 @@ section[data-testid="stSidebar"] { display:none !important; }
 }
 
 /* Rest of the application */
+/* Final stability fixes: real Streamlit tabs remain clickable and horizontally scrollable. */
+div[data-baseweb="tab-list"] { overflow-x:auto !important; overflow-y:hidden !important; flex-wrap:nowrap !important; scrollbar-width:thin !important; }
+div[data-baseweb="tab-list"] > div { flex:0 0 auto !important; }
+button[data-baseweb="tab"] { flex:0 0 auto !important; white-space:nowrap !important; min-width:max-content !important; }
+div[data-testid="stHorizontalBlock"] { min-width:0 !important; width:100% !important; }
+div[data-testid="column"] { min-width:0 !important; }
+@media (max-width:900px){
+  div[data-testid="stHorizontalBlock"] { flex-wrap:wrap !important; }
+}
+
 div[data-baseweb="tab-list"] {
     gap:8px !important;
     padding:0 clamp(12px,3vw,36px) 12px !important; overflow-x:auto !important;
@@ -1199,12 +1187,12 @@ render_html("""
   </div>
   <div class="smart-menu">
     <a class="active" href="#smart-home"><span class="mi">⌂</span><span>Home</span></a>
-    <a href="#bus-management"><span class="mi">🚌</span><span>Bus Management</span></a>
-    <a href="#route-management"><span class="mi">🗺</span><span>Route Management</span></a>
-    <a href="#passenger-management"><span class="mi">♟</span><span>Passenger Management</span></a>
-    <a href="#analytics"><span class="mi">▥</span><span>Analytics</span></a>
-    <a href="#reports"><span class="mi">▤</span><span>Reports</span></a>
-    <a href="#ai-assistant"><span class="mi">🤖</span><span>AI Assistant</span></a>
+    <a href="#workspace-tabs"><span class="mi">🚌</span><span>Bus Management</span></a>
+    <a href="#workspace-tabs"><span class="mi">🗺</span><span>Route Management</span></a>
+    <a href="#workspace-tabs"><span class="mi">♟</span><span>Passenger Management</span></a>
+    <a href="#workspace-tabs"><span class="mi">▥</span><span>Analytics</span></a>
+    <a href="#workspace-tabs"><span class="mi">▤</span><span>Reports</span></a>
+    <a href="#workspace-tabs"><span class="mi">🤖</span><span>AI Assistant</span></a>
   </div>
 </div>
 """)
@@ -1232,6 +1220,8 @@ render_html("""
 <div class="workspace-title">Smart Bus Operations</div>
 <div class="workspace-caption">Use the modules below to search routes, reserve seats, manage passenger documents, review fares, and operate the AI assistant.</div>
 """)
+
+st.markdown('<div id="workspace-tabs"></div>', unsafe_allow_html=True)
 
 tab_timing, tab_booking, tab_passengers, tab_fare_matrix, tab_admin = st.tabs([
     "Bus Management",
@@ -1267,18 +1257,31 @@ with tab_timing:
 
     route_details = google_maps_route_details(src_station, dst_station)
     schedule_data = get_complete_schedule(src_station, dst_station, route_details=route_details)
-    ai_buses = [
-        b for b in st.session_state.custom_ai_buses 
-        if b.get("from") == src_station and b.get("to") == dst_station
-    ]
+    ai_buses = [dict(b) for b in st.session_state.custom_ai_buses if b.get("from") == src_station and b.get("to") == dst_station]
+    if route_details:
+        for b in ai_buses:
+            b["distance_km"] = route_details["distance_km"]
+            b["distance_source"] = "Google Maps Routes API"
+            try:
+                fi=compute_official_fare(src_station,dst_station,b.get("type","TNSTC Express"),route_details["distance_km"],False)
+                b["fare_breakdown"]=fi; b["fare"]=fi["total_fare"]
+                if route_details.get("duration_min") is not None:
+                    b["duration_min"]=route_details["duration_min"]; b["duration_str"]=f"{route_details['duration_min']//60}h {route_details['duration_min']%60}m"
+            except Exception: pass
     all_buses = schedule_data + ai_buses
 
     dist_val = route_details["distance_km"] if route_details else None
     is_ghat = any(h in src_station or h in dst_station for h in GHAT_LOCATIONS)
 
-    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+    if route_details:
+        dmin=route_details.get("duration_min") or 0
+        st.success(f"📍 Google Maps road distance: **{dist_val:.1f} km** • estimated drive time: **{dmin//60}h {dmin%60}m**")
+    else:
+        st.warning("📍 Google Maps distance is unavailable. Add GOOGLE_MAPS_API_KEY in Streamlit Secrets. No guessed distance is shown.")
+
+    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5, gap="small")
     with kpi1:
-        st.metric("Highway Distance", f"{dist_val} km", delta="Ghat Section" if is_ghat else "State Corridor")
+        st.metric("Highway Distance", f"{dist_val:.1f} km" if dist_val is not None else "Not available", delta="Ghat Section" if is_ghat else "Google Maps")
     with kpi2:
         st.metric("Daily Services", f"{len(all_buses)} Buses", delta="Regular Frequency")
     with kpi3:
@@ -1333,7 +1336,7 @@ with tab_timing:
     elif sort_by == "Lowest Government Fare":
         filtered_buses.sort(key=lambda x: x["fare"])
     elif sort_by == "Shortest Travel Time":
-        filtered_buses.sort(key=lambda x: x["duration_str"])
+        filtered_buses.sort(key=lambda x: int(x.get("duration_min", 999999)))
 
     st.write(f"Showing **{len(filtered_buses)}** scheduled state transport services for **{src_station} ➔ {dst_station}**:")
 
